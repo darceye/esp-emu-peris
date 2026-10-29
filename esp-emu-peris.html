@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP-EMU PERIS — ESP32 emulator with peripherals</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%23ff7a1a'/%3E%3Crect x='4' y='4' width='8' height='8' rx='1.5' fill='none' stroke='%23141414' stroke-width='1.6'/%3E%3Cpath d='M6 1.5v2M10 1.5v2M6 12.5v2M10 12.5v2M1.5 6h2M1.5 10h2M12.5 6h2M12.5 10h2' stroke='%23141414' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E">
+    <!-- xterm vendored locally (from npm xterm@5.3.0 / xterm-addon-fit@0.8.0,
+         unminified build) so the page works without CDN access. -->
+    <link rel="stylesheet" href="peris/vendor/css/xterm.css">
+    <style>
+        :root {
+            --bg: #0e0e10;
+            --surface: #151518;
+            --surface-2: #1c1c21;
+            --surface-3: #232329;
+            --border: #26262d;
+            --border-strong: #34343d;
+            --text: #ececea;
+            --muted: #8e8e98;
+            --faint: #5c5c66;
+            --accent: #ff7a1a;
+            --accent-hover: #ff9247;
+            --accent-soft: rgba(255, 122, 26, 0.14);
+            --accent-text: #ffb27a;
+            --ok: #49d49a;
+            --warn: #f5c04a;
+            --err: #ff5c5c;
+            --mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+            --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+            --radius: 6px;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body {
+            font-family: var(--sans);
+            font-size: 13px;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+        button, select, input { font: inherit; color: inherit; }
+
+        /* ---- top bar ---- */
+        header {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 0 16px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex-shrink: 0;
+        }
+        .brand { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+        .brand .mark {
+            width: 26px; height: 26px;
+            border-radius: 7px;
+            background: linear-gradient(135deg, var(--accent) 0%, #ff4e1a 100%);
+            display: grid; place-items: center;
+            box-shadow: 0 0 0 1px rgba(255, 122, 26, 0.35), 0 4px 14px rgba(255, 122, 26, 0.25);
+        }
+        .brand .mark svg { width: 16px; height: 16px; }
+        header h1 { font-size: 16px; font-weight: 650; letter-spacing: 0.2px; }
+        header h1 span {
+            color: var(--muted);
+            font-weight: 500;
+            font-size: 12px;
+            font-family: var(--mono);
+            margin-left: 6px;
+        }
+        .transport { display: flex; align-items: center; gap: 6px; margin-left: 8px; }
+        .btn {
+            background: var(--surface-2);
+            border: 1px solid var(--border-strong);
+            color: var(--text);
+            padding: 5px 12px;
+            border-radius: var(--radius);
+            cursor: pointer;
+            display: inline-flex; align-items: center; gap: 6px;
+            line-height: 1.2;
+            transition: background 0.12s, border-color 0.12s, color 0.12s;
+        }
+        .btn:hover:not(:disabled) { background: var(--surface-3); border-color: #44444f; }
+        .btn:disabled { opacity: 0.38; cursor: default; }
+        .btn.primary { background: var(--accent); border-color: var(--accent); color: #141414; font-weight: 600; }
+        .btn.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+        .btn.small { padding: 3px 9px; font-size: 12px; }
+        .btn svg { width: 11px; height: 11px; fill: currentColor; }
+
+        .status { margin-left: auto; display: flex; align-items: center; gap: 14px; white-space: nowrap; }
+        .pill {
+            display: inline-flex; align-items: center; gap: 7px;
+            padding: 4px 10px 4px 8px;
+            border-radius: 999px;
+            background: var(--surface-2);
+            border: 1px solid var(--border-strong);
+            font-size: 12px;
+            color: var(--muted);
+        }
+        .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+        .pill[data-state="ready"] .dot { background: var(--warn); }
+        .pill[data-state="running"] .dot { background: var(--ok); box-shadow: 0 0 0 3px rgba(73, 212, 154, 0.2); }
+        .pill[data-state="paused"] .dot { background: var(--accent); }
+        .pill[data-state="running"], .pill[data-state="ready"], .pill[data-state="paused"] { color: var(--text); }
+        .status .mips {
+            color: var(--accent-text);
+            font-weight: 600;
+            font-family: var(--mono);
+            min-width: 84px; text-align: right;
+        }
+        .status #cycle-display { font-family: var(--mono); color: var(--muted); min-width: 110px; text-align: right; font-size: 12px; }
+
+        /* ---- layout ---- */
+        .main-area { display: flex; flex: 1; overflow: hidden; }
+        .left-panel, .side-panel {
+            background: var(--surface);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            flex-shrink: 0;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border-strong) transparent;
+        }
+        .left-panel { width: 236px; border-right: 1px solid var(--border); }
+        .side-panel { width: 360px; border-left: 1px solid var(--border); }
+        .panel-section { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+        .panel-section h3 {
+            font-size: 10.5px;
+            text-transform: uppercase;
+            letter-spacing: 0.9px;
+            color: var(--muted);
+            margin-bottom: 10px;
+            display: flex; align-items: center; justify-content: space-between; gap: 8px;
+            font-weight: 600;
+        }
+        .panel-section h3 .tag {
+            font-family: var(--mono);
+            font-size: 10px;
+            letter-spacing: 0;
+            text-transform: none;
+            color: var(--accent-text);
+            background: var(--accent-soft);
+            padding: 1px 6px;
+            border-radius: 4px;
+        }
+
+        /* ---- right panel tabs (peris) ---- */
+        .panel-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border);
+            position: sticky; top: 0;
+            background: var(--surface);
+            z-index: 2;
+        }
+        .ptab {
+            flex: 1;
+            background: none;
+            border: 0;
+            border-bottom: 2px solid transparent;
+            color: var(--muted);
+            padding: 10px 8px 8px;
+            font-size: 11.5px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            cursor: pointer;
+        }
+        .ptab:hover { color: var(--text); }
+        .ptab.active { color: var(--accent-text); border-bottom-color: var(--accent); }
+        .pane.hidden { display: none; }
+
+        /* ---- peripherals panel (peris) ---- */
+        #pane-peris { flex: 1; display: flex; flex-direction: column; }
+        #pane-peris.over { outline: 2px dashed var(--accent); outline-offset: -6px; }
+        .peris-toolbar {
+            display: flex; gap: 6px; padding: 10px 14px;
+            border-bottom: 1px solid var(--border);
+            position: sticky; top: 41px; background: var(--surface); z-index: 1;
+        }
+        .peris-toolbar select {
+            flex: 1; min-width: 0;
+            background: var(--bg); border: 1px solid var(--border-strong);
+            border-radius: var(--radius); padding: 4px 8px; font-size: 12px;
+        }
+        #peris-errors {
+            display: none;
+            color: var(--warn); font-size: 11.5px;
+            padding: 6px 14px; border-bottom: 1px solid var(--border);
+            line-height: 1.5;
+        }
+        #peris-cards { flex: 1; padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+        #peris-empty { padding: 22px 10px; text-align: center; color: var(--faint); font-size: 12px; line-height: 1.6; }
+        #peris-empty strong { color: var(--muted); }
+
+        .peris-card {
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 10px 12px;
+        }
+        .peris-card-head {
+            display: flex; align-items: center; gap: 8px;
+            margin-bottom: 8px;
+        }
+        .dev-title { font-weight: 600; font-size: 12.5px; }
+        .dev-type { color: var(--faint); font-size: 10.5px; font-family: var(--mono); }
+        .dev-remove { margin-left: auto; padding: 1px 7px; font-size: 13px; color: var(--muted); }
+        .dev-remove:hover { color: var(--err); border-color: var(--err); }
+
+        .dev-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin-top: 10px; }
+        .dev-field { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+        .dev-field span { flex: 1; white-space: nowrap; }
+        .dev-field input[type="text"], .dev-field input[type="number"], .dev-field select {
+            width: 96px; flex-shrink: 0;
+            background: var(--bg); border: 1px solid var(--border-strong);
+            border-radius: 4px; padding: 3px 6px; font-size: 11.5px; outline: none;
+        }
+        .dev-field input[type="color"] { width: 34px; height: 22px; padding: 0; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--bg); }
+        .dev-field input[type="checkbox"] { accent-color: var(--accent); }
+        .dev-field select { max-width: 96px; }
+
+        /* device view bodies */
+        .dev-body { min-height: 74px; display: flex; align-items: center; justify-content: center; }
+        .led-wrap { display: flex; align-items: center; justify-content: center; padding: 6px 0; }
+        .led-bulb {
+            --led-color: #ff4d4d;
+            width: 44px; height: 44px; border-radius: 50%;
+            border: 2px solid color-mix(in srgb, var(--led-color) 45%, #2a2a30);
+            background: radial-gradient(circle at 38% 32%, color-mix(in srgb, var(--led-color) 16%, #1a1a1e), #101014 72%);
+            position: relative;
+            transition: box-shadow 0.15s, border-color 0.15s;
+        }
+        .led-bulb.lit {
+            background: radial-gradient(circle at 38% 32%, #ffffff33 0%, var(--led-color) 46%, color-mix(in srgb, var(--led-color) 55%, #20060a) 100%);
+            box-shadow: 0 0 18px 4px color-mix(in srgb, var(--led-color) 55%, transparent), 0 0 44px 10px color-mix(in srgb, var(--led-color) 25%, transparent);
+            border-color: var(--led-color);
+        }
+        .led-bulb.floating { border-style: dashed; opacity: 0.6; }
+        .led-cap { text-align: center; font-size: 10.5px; color: var(--faint); font-family: var(--mono); margin-top: 6px; }
+
+        .hw-button {
+            min-width: 128px;
+            padding: 16px 22px;
+            border-radius: 10px;
+            border: 1px solid var(--border-strong);
+            background: linear-gradient(180deg, var(--surface-3), var(--surface-2));
+            color: var(--muted);
+            font-weight: 700; font-size: 12px; letter-spacing: 1.2px;
+            cursor: pointer;
+            box-shadow: 0 3px 0 #0a0a0c, inset 0 1px 0 rgba(255,255,255,0.05);
+            transition: transform 0.05s, box-shadow 0.05s, color 0.1s;
+            user-select: none;
+        }
+        .hw-button.down, .hw-button:active {
+            transform: translateY(3px);
+            box-shadow: 0 0 0 #0a0a0c, inset 0 1px 3px rgba(0,0,0,0.5);
+            color: var(--accent-text);
+            border-color: var(--accent);
+        }
+
+        .touch-pad {
+            min-width: 116px; min-height: 74px;
+            border-radius: 12px;
+            border: 1px solid var(--border-strong);
+            background: linear-gradient(180deg, #17171b, #101013);
+            display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+            color: var(--faint); cursor: pointer; user-select: none;
+            transition: color 0.12s, border-color 0.12s, box-shadow 0.12s;
+        }
+        .touch-pad svg { width: 26px; height: 26px; }
+        .touch-pad .touch-label { font-size: 9.5px; letter-spacing: 1.6px; font-weight: 700; }
+        .touch-pad:hover { color: var(--muted); }
+        .touch-pad.active {
+            color: var(--accent-text);
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-soft), inset 0 0 24px rgba(255,122,26,0.12);
+        }
+
+        .hw-switch { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+        .hw-switch input { display: none; }
+        .sw-track {
+            width: 46px; height: 24px; border-radius: 999px;
+            background: var(--bg); border: 1px solid var(--border-strong);
+            position: relative; transition: background 0.15s, border-color 0.15s;
+        }
+        .sw-knob {
+            position: absolute; top: 2px; left: 2px;
+            width: 18px; height: 18px; border-radius: 50%;
+            background: var(--surface-3); border: 1px solid var(--border-strong);
+            transition: left 0.15s, background 0.15s;
+        }
+        .hw-switch input:checked + .sw-track { background: var(--accent-soft); border-color: var(--accent); }
+        .hw-switch input:checked + .sw-track .sw-knob { left: 24px; background: var(--accent); border-color: var(--accent); }
+        .sw-text { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+        /* ---- form fields ---- */
+        .field { margin-bottom: 10px; }
+        .field:last-child { margin-bottom: 0; }
+        .field label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+        .field select, .field input[type="text"], .field .btn { width: 100%; }
+        .field select, .field input[type="text"] {
+            background: var(--bg);
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius);
+            padding: 6px 8px;
+            font-size: 12.5px;
+            outline: none;
+        }
+        .field select:focus, .field input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+        .field select { appearance: none; -webkit-appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238e8e98'/%3E%3C/svg%3E");
+            background-repeat: no-repeat; background-position: right 9px center; padding-right: 24px; }
+        .file-upload { position: relative; overflow: hidden; display: block; }
+        .file-upload .btn { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+        .file-upload input[type="file"] { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+        .dropzone {
+            border: 1px dashed var(--border-strong);
+            border-radius: var(--radius);
+            padding: 14px 10px;
+            text-align: center;
+            color: var(--muted);
+            font-size: 12px;
+            cursor: pointer;
+            transition: border-color 0.12s, background 0.12s;
+            position: relative;
+        }
+        .dropzone:hover, .dropzone.over { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+        .dropzone strong { color: var(--accent-text); font-weight: 600; }
+        .dropzone .fname { display: block; margin-top: 4px; font-family: var(--mono); font-size: 11px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .dropzone input[type="file"] { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+        .note { font-size: 11px; color: var(--faint); line-height: 1.45; margin-top: 8px; }
+        .note.warn { color: var(--warn); }
+
+        /* ---- terminal ---- */
+        .terminal-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+        .term-toolbar {
+            display: flex; align-items: center; gap: 12px;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+            font-size: 11.5px; color: var(--muted);
+        }
+        .term-toolbar h2 { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.9px; font-weight: 600; color: var(--muted); }
+        .term-toolbar .hint { color: var(--faint); }
+        .term-toolbar .spacer { flex: 1; }
+        .term-toolbar .count { font-family: var(--mono); }
+        #terminal-container { flex: 1; padding: 8px 4px 6px 10px; overflow: hidden; }
+        #terminal-container.over { outline: 2px dashed var(--accent); outline-offset: -6px; }
+        .xterm .xterm-viewport { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+
+        /* ---- stat tiles & chart ---- */
+        .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+        .tile { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; }
+        .tile .k { font-size: 10.5px; color: var(--muted); margin-bottom: 3px; }
+        .tile .v { font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--text); }
+        .tile .v small { font-size: 10.5px; color: var(--muted); font-weight: 500; margin-left: 3px; }
+        .tile.accent .v { color: var(--accent-text); }
+        .chart-wrap { position: relative; }
+        #mips-chart { display: block; width: 100%; height: 64px; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--border); }
+        .chart-caption { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--faint); margin-top: 4px; }
+        .chart-tip {
+            position: absolute; top: 6px; pointer-events: none;
+            background: var(--surface-3); border: 1px solid var(--border-strong);
+            padding: 2px 6px; border-radius: 4px;
+            font-family: var(--mono); font-size: 10.5px; color: var(--text);
+            display: none; white-space: nowrap;
+        }
+
+        /* ---- cores ---- */
+        .cores { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .core { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 7px 10px; }
+        .core .k { font-size: 10.5px; color: var(--muted); display: flex; justify-content: space-between; }
+        .core .v { font-family: var(--mono); font-size: 13px; color: var(--accent-text); margin-top: 2px; }
+        .core.idle { opacity: 0.45; }
+
+        /* ---- GPIO ---- */
+        .gpio-legend { display: flex; gap: 12px; font-size: 10.5px; color: var(--muted); margin-bottom: 8px; flex-wrap: wrap; }
+        .gpio-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; border: 1px solid var(--border-strong); }
+        .gpio-legend i.out-high { background: var(--accent); border-color: var(--accent); }
+        .gpio-legend i.out-low { background: transparent; border-color: var(--accent); }
+        .gpio-legend i.in-high { background: var(--surface-3); border-color: var(--muted); }
+        .gpio-legend i.in-low { background: var(--bg); }
+        .gpio-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px; }
+        .gpio-pin {
+            height: 30px;
+            border-radius: 5px;
+            border: 1px solid var(--border-strong);
+            background: var(--bg);
+            display: flex; align-items: center; justify-content: center;
+            font-family: var(--mono); font-size: 10.5px;
+            color: var(--muted);
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.1s, border-color 0.1s, color 0.1s;
+        }
+        .gpio-pin.in.high { background: var(--surface-3); border-color: var(--muted); color: var(--text); }
+        .gpio-pin.in:hover { border-color: var(--text); }
+        .gpio-pin.out { cursor: default; }
+        .gpio-pin.out.low { border-color: var(--accent); color: var(--accent-text); }
+        .gpio-pin.out.high { background: var(--accent); border-color: var(--accent); color: #141414; font-weight: 600; }
+        .gpio-pin.absent { visibility: hidden; }
+
+        /* ---- registers ---- */
+        .reg-table { font-family: var(--mono); font-size: 11px; width: 100%; border-collapse: collapse; }
+        .reg-table td { padding: 2px 4px; white-space: nowrap; }
+        .reg-table .name { color: var(--muted); width: 1%; }
+        .reg-table .val { color: var(--text); border-radius: 3px; transition: background 0.5s, color 0.5s; }
+        .reg-table .val.changed { background: var(--accent-soft); color: var(--accent-text); transition: none; }
+        .reg-table tr.sep td { padding-top: 6px; }
+
+        /* ---- memory ---- */
+        .mem-controls { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
+        .mem-controls input[type="text"] {
+            flex: 1; min-width: 0;
+            background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--radius);
+            padding: 4px 8px; font-family: var(--mono); font-size: 11.5px; outline: none;
+        }
+        .mem-controls input[type="text"]:focus { border-color: var(--accent); }
+        .mem-controls select {
+            background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--radius);
+            padding: 4px 6px; font-family: var(--mono); font-size: 11px;
+        }
+        .mem-follow { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+        .mem-follow input { accent-color: var(--accent); }
+        #mem-display {
+            font-family: var(--mono); font-size: 10.5px; line-height: 1.5;
+            color: var(--text);
+            background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+            padding: 6px 8px;
+            max-height: 230px; overflow: auto;
+            white-space: pre;
+            scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent;
+        }
+        #mem-display .addr { color: var(--accent-text); }
+        #mem-display .ascii { color: var(--muted); }
+        #mem-display .zero { color: var(--faint); }
+        #mem-display .empty { color: var(--faint); }
+
+        footer {
+            background: var(--surface);
+            padding: 5px 16px;
+            font-size: 11px;
+            color: var(--faint);
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
+            display: flex; justify-content: space-between; gap: 12px;
+        }
+        footer a { color: var(--muted); text-decoration: none; }
+        footer a:hover { color: var(--accent-text); }
+
+        @media (max-width: 1100px) {
+            .side-panel { width: 300px; }
+            .gpio-grid { grid-template-columns: repeat(7, 1fr); }
+        }
+        @media (max-width: 860px) {
+            body { height: auto; overflow: auto; }
+            header { height: auto; flex-wrap: wrap; padding: 10px 16px; gap: 10px; }
+            .status { margin-left: 0; width: 100%; }
+            .main-area { flex-direction: column; overflow: visible; }
+            .left-panel, .side-panel { width: 100%; border: 0; border-bottom: 1px solid var(--border); }
+            .terminal-panel { min-height: 50vh; }
+            footer { flex-direction: column; gap: 2px; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="brand">
+            <div class="mark" aria-hidden="true">
+                <svg viewBox="0 0 16 16" fill="none" stroke="#141414" stroke-width="1.6" stroke-linecap="round">
+                    <rect x="4" y="4" width="8" height="8" rx="1.5"/>
+                    <path d="M6 1.5v2M10 1.5v2M6 12.5v2M10 12.5v2M1.5 6h2M1.5 10h2M12.5 6h2M12.5 10h2"/>
+                </svg>
+            </div>
+            <h1>ESP-EMU <span>v0.51.0 + peris</span></h1>
+        </div>
+        <div class="transport">
+            <button id="run-btn" class="btn primary" disabled><svg viewBox="0 0 10 10"><path d="M1 0l8 5-8 5z"/></svg>Run</button>
+            <button id="pause-btn" class="btn" disabled><svg viewBox="0 0 10 10"><path d="M1 0h3v10H1zM6 0h3v10H6z"/></svg>Pause</button>
+            <button id="step-btn" class="btn" disabled><svg viewBox="0 0 10 10"><path d="M0 0l6 5-6 5zM7 0h2v10H7z"/></svg>Step</button>
+            <button id="reset-btn" class="btn" disabled><svg viewBox="0 0 10 10"><path d="M5 1a4 4 0 1 0 4 4h-1.5A2.5 2.5 0 1 1 5 2.5V4l3-2.5L5 0z"/></svg>Reset</button>
+        </div>
+        <div class="status">
+            <span class="pill" id="status-pill" data-state="idle"><i class="dot"></i><span id="status-text">No firmware loaded</span></span>
+            <span class="mips" id="mips-display">0.0 MIPS</span>
+            <span id="cycle-display">0 cycles</span>
+        </div>
+    </header>
+
+    <div class="main-area">
+        <aside class="left-panel">
+            <div class="panel-section">
+                <h3>Target</h3>
+                <div class="field">
+                    <label for="chip-select">Chip</label>
+                    <select id="chip-select">
+                        <option value="esp32c3">ESP32-C3 · RV32IMAC</option>
+                        <option value="esp32c5">ESP32-C5 · RV32IMAC</option>
+                        <option value="esp32c6">ESP32-C6 · RV32IMAC</option>
+                        <option value="esp32h2">ESP32-H2 · RV32IMAC</option>
+                        <option value="esp32p4">ESP32-P4 · RV32IMAFC ×2</option>
+                        <option value="esp32s3">ESP32-S3 · Xtensa LX7 ×2</option>
+                        <option value="esp32s31">ESP32-S31 · RV32IMAFC ×2</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>Firmware (merged flash image)</label>
+                    <div class="dropzone" id="fw-drop">
+                        <span id="fw-drop-text"><strong>Choose a .bin</strong> or drop it here</span>
+                        <span class="fname" id="fw-name"></span>
+                        <input type="file" id="firmware-file" accept=".bin">
+                    </div>
+                </div>
+                <div class="field">
+                    <label>ROM ELF</label>
+                    <div class="file-upload">
+                        <button id="rom-btn" class="btn small">Override ROM...</button>
+                        <input type="file" id="rom-file" accept=".elf">
+                    </div>
+                    <div class="note">The embedded ROM is used unless you pick another revision.</div>
+                </div>
+            </div>
+            <div class="panel-section">
+                <h3>WiFi soft AP</h3>
+                <div class="field">
+                    <label for="wifi-ssid">SSID</label>
+                    <input type="text" id="wifi-ssid" value="myssid" placeholder="WiFi SSID">
+                </div>
+                <div class="field">
+                    <label for="wifi-password">Password</label>
+                    <input type="text" id="wifi-password" value="mypassword" placeholder="Empty for open network">
+                </div>
+                <div class="note">Firmware that joins this network gets an association and a DHCP lease. Taking packets further needs the proxy below.</div>
+            </div>
+            <div class="panel-section" id="net-section">
+                <h3>Network proxy</h3>
+                <div class="field">
+                    <label for="net-url">WebSocket URL</label>
+                    <input type="text" id="net-url" value="ws://localhost:8765" placeholder="ws://host:port">
+                </div>
+                <div class="field">
+                    <button id="net-btn" class="btn small">Connect</button>
+                </div>
+                <div class="note" id="net-note">Bridges WiFi frames to a TAP interface on your machine via <code>tools/ws-net-proxy.py</code>.</div>
+            </div>
+        </aside>
+
+        <section class="terminal-panel">
+            <div class="term-toolbar">
+                <h2>UART0 console</h2>
+                <span class="hint">Typing here goes to the firmware</span>
+                <span class="spacer"></span>
+                <span class="count" id="uart-count">0 B</span>
+                <button id="clear-btn" class="btn small">Clear</button>
+            </div>
+            <div id="terminal-container"></div>
+        </section>
+
+        <aside class="side-panel">
+            <div class="panel-tabs">
+                <button class="ptab active" data-pane="peris">Peripherals</button>
+                <button class="ptab" data-pane="debug">Debug</button>
+            </div>
+
+            <div class="pane" id="pane-peris">
+                <div class="peris-toolbar">
+                    <select id="peris-add" title="Add a peripheral"></select>
+                    <button id="peris-add-btn" class="btn small primary">Add</button>
+                    <button id="peris-export-btn" class="btn small" title="Download the wiring config as JSON">Export</button>
+                    <button id="peris-import-btn" class="btn small" title="Load a wiring config from a JSON file">Import</button>
+                    <input type="file" id="peris-import-file" accept=".json" hidden>
+                </div>
+                <div id="peris-errors"></div>
+                <div id="peris-cards"></div>
+                <div id="peris-empty">
+                    <strong>No peripherals wired yet.</strong><br>
+                    Pick one above and press <em>Add</em>, or drop a<br>
+                    peris <em>.json</em> config here / press Import.
+                </div>
+            </div>
+
+            <div class="pane hidden" id="pane-debug">
+                <div class="panel-section">
+                    <h3>Performance</h3>
+                    <div class="tiles">
+                        <div class="tile accent"><div class="k">Speed</div><div class="v" id="tile-mips">0.0<small>MIPS</small></div></div>
+                        <div class="tile"><div class="k">vs. real time (live)</div><div class="v" id="tile-ratio">–</div></div>
+                        <div class="tile"><div class="k">Emulated time</div><div class="v" id="tile-time">0.000<small>s</small></div></div>
+                        <div class="tile"><div class="k">Cycles</div><div class="v" id="tile-cycles">0</div></div>
+                    </div>
+                    <div class="chart-wrap">
+                        <canvas id="mips-chart" height="64"></canvas>
+                        <div class="chart-tip" id="chart-tip"></div>
+                    </div>
+                    <div class="chart-caption"><span>MIPS, last 30 s</span><span id="chart-max"></span></div>
+                </div>
+                <div class="panel-section">
+                    <h3>Cores <span class="tag" id="isa-tag">–</span></h3>
+                    <div class="cores" id="cores"></div>
+                </div>
+                <div class="panel-section">
+                    <h3>GPIO <span class="tag" id="gpio-count"></span></h3>
+                    <div class="gpio-legend">
+                        <span><i class="out-high"></i>output high</span>
+                        <span><i class="out-low"></i>output low</span>
+                        <span><i class="in-high"></i>input high</span>
+                        <span><i class="in-low"></i>input low</span>
+                    </div>
+                    <div class="gpio-grid" id="gpio-grid"></div>
+                    <div class="note">Click an input pin to drive it. Pins the firmware configured as outputs show what it drives.</div>
+                </div>
+                <div class="panel-section">
+                    <h3>Registers <span class="tag" id="reg-tag">hart 0</span></h3>
+                    <table class="reg-table" id="reg-table"></table>
+                </div>
+                <div class="panel-section">
+                    <h3>Memory</h3>
+                    <div class="mem-controls">
+                        <input type="text" id="mem-addr" placeholder="0x3FC80000" spellcheck="false">
+                        <select id="mem-len">
+                            <option value="64">64 B</option>
+                            <option value="256" selected>256 B</option>
+                            <option value="1024">1 KiB</option>
+                        </select>
+                        <button id="mem-read-btn" class="btn small">Read</button>
+                    </div>
+                    <div class="mem-controls">
+                        <label class="mem-follow"><input type="checkbox" id="mem-follow"> Refresh while running</label>
+                    </div>
+                    <div id="mem-display"><span class="empty">Enter an address and press Read.</span></div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <footer>
+        <span>ESP-EMU v0.51.0 + esp-emu-peris | Emulates ESP32-C3/C5/C6/H2, ESP32-P4/S31, ESP32-S3</span>
+        <span>Runs entirely in this tab · <a href="https://github.com/espressif/esp-emulator" target="_blank" rel="noopener">esp-emulator</a> · <a href="https://github.com/darceye/esp-emu-peris" target="_blank" rel="noopener">esp-emu-peris</a></span>
+    </footer>
+
+    <script src="peris/vendor/lib/xterm.js"></script>
+    <script src="peris/vendor/lib/xterm-addon-fit.js"></script>
+    <script type="module" src="peris/app.js"></script>
+</body>
+</html>

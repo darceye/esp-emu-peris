@@ -1,0 +1,8 @@
+{
+    "devices": [
+        { "module": "led.js" },
+        { "module": "button.js" },
+        { "module": "touch-button.js" },
+        { "module": "toggle-switch.js" }
+    ]
+}

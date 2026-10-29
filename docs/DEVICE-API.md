@@ -1,0 +1,82 @@
+# esp-emu-peris 外设接口规范(v1)
+
+一个外设 = `peris/devices/` 下的一个 ES 模块 + `manifest.json` 里的一行。除此之外不需要改动项目任何其它文件。
+
+## 模块导出
+
+```js
+export class Device {          // 运行在 worker,与模拟器交互
+    static typeId      = 'led';       // 唯一、稳定、kebab-case
+    static title       = 'LED';       // UI 显示名
+    static category    = 'basic';     // Add 菜单分组
+    static description = '...';       // 一行说明(tooltip)
+    static defaultConfig = {...};     // 新建实例的默认配置
+    static configSchema = [           // 通用配置编辑器字段
+        { key: 'pin',    label: 'GPIO pin', type: 'pin' },
+        { key: 'color',  label: 'Colour',   type: 'color' },
+        { key: 'name',   label: 'Label',    type: 'text' },
+        // type 还支持: number(min/max/step)、select(options:[{value,label}])、checkbox
+    ];
+    static pins(cfg) { return [cfg.pin]; }   // 声明占用的 GPIO(用于冲突检测)
+
+    constructor(ctx, cfg) {}          // cfg = { id, type, ...设备配置 }
+    onPinState(pin, s) {}             // 引脚输出变化回调 s={out, oe, cycles}
+    onCommand(cmd, params) {}         // 页面 View 发来的用户操作
+    onEmuReady() {}                   // 模拟器(重)加载后:重新驱动输入电平
+    getState() { return {...}; }      // 可序列化状态,推给页面 View(~30fps)
+    destroy() {}                      // 释放/恢复引脚
+}
+
+export class View {             // 运行在页面,渲染设备卡片主体
+    constructor(el, sendCmd) {}  // el=卡片主体容器; sendCmd(cmd, params)
+    render(state) {}             // state 来自 Device.getState()
+    setConfig(cfg) {}            // 可选:配置编辑后回调(如换 LED 颜色)
+}
+```
+
+## ctx(worker 侧设备上下文)
+
+| 成员 | 说明 |
+|---|---|
+| `ctx.id` / `ctx.chip` / `ctx.gpioCount` | 设备 id、芯片型号、GPIO 数 |
+| `ctx.setPinInput(pin, high)` | 驱动引脚输入电平(固件可读到、可触发 GPIO 中断) |
+| `ctx.subscribe(pins)` / `ctx.unsubscribe()` | 订阅引脚输出变化(onPinState) |
+| `ctx.readMem(addr, len)` / `ctx.readU32(addr)` | 总线/MMIO 读取(LEDC duty、RMT RAM 等) |
+| `ctx.cycles()` | 模拟器周期计数 |
+| `ctx.markDirty()` | 请求尽快把 getState() 推给页面 |
+| `ctx.log(text, level?)` | 在 UART 控制台打一条 `[Peris]` 日志 |
+
+## 消息协议(页面 ↔ worker)
+
+在原版 worker 协议之外增加(见 `peris/protocol.js`):
+
+- 页面→worker:`peris_config {config}`(全量应用配置)、`peris_command {id, cmd, params}`
+- worker→页面:`peris_ready {ok, errors, devices}`、`peris_state {id, state}`、`peris_log {level, text}`
+
+## 配置文件
+
+```json
+{
+  "perisVersion": 1,
+  "chip": "esp32c3",
+  "devices": [ { "id": "led-1", "type": "led", "pin": 8, "color": "#ff4d4d", "name": "Red" } ]
+}
+```
+
+- 自动保存于 localStorage(`peris.config.v1`),面板 Export/Import 按钮可导出/导入 `.json`。
+- v1 规则:每个 GPIO 同时只能被一个设备占用(任意方向);冲突会在面板顶部黄条提示。
+
+## 设备开发注意事项(源自 M0 实测,见 FEASIBILITY.md)
+
+1. **引脚输出**:固件主动 GPIO 输出在 `onPinState` 可见(out+oe);**LEDC/RMT 走 GPIO matrix 的信号不出现在引脚寄存器**,必须读 MMIO(LEDC duty 寄存器、RMT 通道 RAM),地址表在 `peris/mmio/`。
+2. **引脚输入**:`ctx.setPinInput` 会真实进入固件(读值+中断),按键类设备在 `onEmuReady` 里要重新驱动电平(模拟器重载后电平复位)。
+3. **时间**:`vTaskDelay` 期间模拟器时间快进,不要试图在 CPU 睡眠窗口做引脚级波形捕获;CPU 活跃的位绑定波形可在 run_batch 批间采样,但请节制(细批约 99 MIPS,粗批 5000+ MIPS)。
+4. 状态推送节流 ~30fps;`getState()` 返回的对象会 postMessage,保持小而可序列化。
+5. View 中所有用户交互统一通过 `sendCmd(cmd, params)` 发给 Device,不要在页面侧直接操作模拟器。
+
+## 示例
+
+- `peris/devices/led.js` — 输出型设备(sigbus 订阅)
+- `peris/devices/button.js` — 输入型设备(setPinInput + onEmuReady)
+- `peris/devices/touch-button.js` — 继承 button 的 Device,换 View
+- `peris/devices/toggle-switch.js` — 保持型输入设备

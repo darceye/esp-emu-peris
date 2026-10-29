@@ -147,3 +147,5 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+.zcode/
+tests/firmware/peris_probe/build/

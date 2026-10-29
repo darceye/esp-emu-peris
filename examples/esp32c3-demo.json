@@ -1,0 +1,12 @@
+{
+    "perisVersion": 1,
+    "chip": "esp32c3",
+    "devices": [
+        { "id": "led-red", "type": "led", "name": "Red", "pin": 8, "color": "#ff4d4d" },
+        { "id": "led-green", "type": "led", "name": "Green", "pin": 9, "color": "#49d49a" },
+        { "id": "led-blue", "type": "led", "name": "Blue", "pin": 10, "color": "#6ea8fe" },
+        { "id": "key-1", "type": "button", "name": "Boot key", "pin": 3, "activeLow": true },
+        { "id": "touch-1", "type": "touch-button", "name": "Touch pad", "pin": 4, "activeLow": true },
+        { "id": "sw-1", "type": "toggle-switch", "name": "Mode", "pin": 5, "activeLow": false, "initial": false }
+    ]
+}
