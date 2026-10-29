@@ -4,37 +4,45 @@
 
 ```
 esp-emu-peris.html      入口页面(UART0 控制台 + 右侧 Peripherals/Debug 双标签)
-peris/                  全部前端代码(自有 worker + 设备插件框架)
-  worker.js             官方 worker 的复刻 + 每批引脚采样钩子(改动均标 peris:)
-  app.js                官方页面逻辑复刻 + Peripherals 面板
-  device-api.js         外设接口契约 v1(见 docs/DEVICE-API.md)
-  registry.js           插件注册表(manifest 驱动)
-  runtime.js            worker 侧设备宿主
-  sigbus.js             引脚信号总线(变化分发)
-  protocol.js / chips.js / mmio/
-  devices/              外设插件:led / button / touch-button / toggle-switch
+src/                    TypeScript 源码(npm run build → peris/core + peris/ui)
+  core/                 worker 侧框架:types/protocol/chips/mmio/sigbus/registry/runtime/worker
+  ui/                   页面侧模块:app/worker-client/terminal/chart/debug-panels/peris-panel/config-editor
+peris/
+  core/  ui/            编译产物(tsc,未入 git;npm run build 生成)
+  devices/              外设插件(原生 JS,丢文件即用):led/button/touch-button/toggle-switch
+  vendor/ peris.css     xterm 本地化 + 面板样式
 examples/               接线配置示例(JSON,可直接 Import)
-tests/                  M0 探针(Node)+ 测试固件(ESP-IDF)
-docs/                   FEASIBILITY(M0 验证报告)/ DEVICE-API / UPGRADE / ROADMAP
+tests/unit/             单元测试(node:test)
+tests/m1_smoke.mjs      集成冒烟(真实 wasm+固件全链路)
+tests/m0_probe.mjs      模拟器能力探针(上游升级时先跑)
+tests/firmware/         ESP-IDF 测试固件
+docs/                   ARCHITECTURE / FEASIBILITY / DEVICE-API / UPGRADE / ROADMAP
 ```
+
+架构、数据流、状态归属与扩展点见 **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**。
 
 ## 快速开始
 
 ```bash
-# 1) 开发服务器(合并服务本仓库与 _tools/esp-emu-browser/www 的 pkg/)
-python serve.py                # http://127.0.0.1:8080/esp-emu-peris.html
+# 一次性:npm 依赖(自动用 npmmirror 源装 typescript)
+npm install
 
-# 2) 浏览器打开上面的地址,选择芯片、拖入 merged flash image(.bin)
-#    注意:必须是 idf.py merge-bin 生成的完整镜像,裸 app bin 无法启动
+# 开发循环:改 src/ → 构建 → 测试 → 起 merged 开发服务器
+npm run build
+npm test
+npm run serve               # http://127.0.0.1:8080/esp-emu-peris.html
 
-# 3) 右侧 Peripherals 标签:Add 添加 LED/按键等,选好 GPIO;
-#    Export/Import 导出/导入接线配置(JSON,自动存 localStorage)
+# 浏览器打开上面的地址,选择芯片、拖入 merged flash image(.bin)
+# 注意:必须是 idf.py merge-bin 生成的完整镜像,裸 app bin 无法启动
+
+# 右侧 Peripherals 标签:Add 添加 LED/按键等,选好 GPIO;
+# Export/Import 导出/导入接线配置(JSON,自动存 localStorage)
 ```
 
-把外设面板**发布**进官方 www 目录(只增不改):
+把外设面板**发布**进官方 www 目录(只增不改;先 build):
 
 ```bash
-python sync_www.py             # 或 sync_www.bat;之后 www/esp-emu-peris.html 即可用
+npm run sync                 # 复制入口 html + peris/(含编译产物)+ examples/
 ```
 
 ## 能力与限制(实测结论,详见 docs/FEASIBILITY.md)
@@ -75,20 +83,18 @@ export class View {
 }
 ```
 
-## 测试固件与 M0 探针
+## 测试固件与测试
 
 ```powershell
-# 构建(用 C:\Users\A\Desktop\quick\idfm.bat 的 IDF 环境)
+# 构建固件(用 C:\Users\A\Desktop\quick\idfm.bat 的 IDF 环境)
 powershell -ExecutionPolicy Bypass -NoProfile -File tests\firmware\build.ps1
 # 生成 merged image(加载用):
 #    tests/firmware/peris_probe/build/merged-binary.bin
+```
 
-# Node 里直接验证模拟器能力(GPIO 可见性 / MMIO / WS2812 解码)
-node tests/m0_probe.mjs
-
-# M1 框架集成冒烟(真实 runtime+设备模块+wasm:配置应用/LED 状态/
-# 按键 ISR 计数/开关命令/引脚冲突/未知类型拒绝)
-node tests/m1_smoke.mjs
+```bash
+npm test                     # 单元测试 + 集成冒烟(见 docs/ARCHITECTURE.md 测试分层)
+npm run test:m0              # 模拟器能力探针(上游 wasm 升级时先跑)
 ```
 
 固件三阶段循环:GPIO8 闪烁 / GPIO9 LEDC 呼吸 / GPIO4 RMT-WS2812 发帧,

@@ -14,12 +14,22 @@
 import { PerisRuntime } from './runtime.js';
 import { PERIS_CONFIG, PERIS_COMMAND } from './protocol.js';
 
-let wasm = null;
-let emulator = null;
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type Msg = any;
+
+declare const self: {
+    onmessage: ((e: { data: Msg }) => void) | null;
+    onerror: ((...a: any[]) => void) | null;
+    onunhandledrejection: ((e: { reason: unknown }) => void) | null;
+    postMessage(m: unknown): void;
+};
+
+let wasm: { WasmEmulator: any } | null = null;
+let emulator: any = null;
 let running = false;
 let batchSize = 50000;
-let pendingLoad = null;
-let ws = null;
+let pendingLoad: Msg | null = null;
+let ws: WebSocket | null = null;
 
 // peris: peripheral device runtime
 const peris = new PerisRuntime();
@@ -28,23 +38,23 @@ const peris = new PerisRuntime();
 // goes to the page while running, and which memory window it follows.
 const SNAPSHOT_INTERVAL_MS = 150;
 let lastSnapshot = 0;
-let memWatch = null; // { addr, len } or null
+let memWatch: { addr: number; len: number } | null = null; // or null
 
 // Global error handler — catches WASM panics and unhandled exceptions
-self.onerror = function(msg, src, line, col, err) {
-    postMessage({ type: 'error', message: `Worker error: ${msg}` });
+self.onerror = function (msg: any, _src: any, _line: any, _col: any, _err: any) {
+    self.postMessage({ type: 'error', message: `Worker error: ${msg}` });
 };
-self.onunhandledrejection = function(e) {
-    postMessage({ type: 'error', message: `Worker promise rejected: ${e.reason}` });
+self.onunhandledrejection = function (e: { reason: unknown }) {
+    self.postMessage({ type: 'error', message: `Worker promise rejected: ${e.reason}` });
 };
 
 // Import wasm module
-async function initWasm(wasmUrl) {
+async function initWasm(wasmUrl: string) {
     try {
-        const { default: init, WasmEmulator } = await import(wasmUrl);
+        const { default: init, WasmEmulator } = await import(/* @vite-ignore */ wasmUrl);
         await init();
         wasm = { WasmEmulator };
-        postMessage({ type: 'ready' });
+        self.postMessage({ type: 'ready' });
 
         // peris: load the device registry (manifest + modules); failures
         // are reported on the console, not fatal.
@@ -61,7 +71,7 @@ async function initWasm(wasmUrl) {
             handleLoad(msg);
         }
     } catch (e) {
-        postMessage({ type: 'error', message: `Failed to init WASM: ${e.message}` });
+        self.postMessage({ type: 'error', message: `Failed to init WASM: ${(e as Error).message}` });
     }
 }
 
@@ -75,10 +85,10 @@ function machineInfo() {
     };
 }
 
-function handleLoad(msg) {
+function handleLoad(msg: Msg) {
     const chip = msg.chip || 'esp32c3';
     try {
-        emulator = new wasm.WasmEmulator(chip);
+        emulator = new wasm!.WasmEmulator(chip);
         if (msg.ssid) {
             emulator.set_wifi_config(msg.ssid, msg.password || '');
         }
@@ -96,16 +106,16 @@ function handleLoad(msg) {
         const data = new Uint8Array(msg.firmware);
         emulator.load_firmware(data);
         peris.attachEmu(emulator, chip); // peris: new emulator instance
-        postMessage({ type: 'loaded', chip, ...machineInfo() });
+        self.postMessage({ type: 'loaded', chip, ...machineInfo() });
         sendSnapshot(true);
     } catch (err) {
-        postMessage({ type: 'error', message: `Load failed: ${err}` });
+        self.postMessage({ type: 'error', message: `Load failed: ${err}` });
     }
 }
 
 // --- WebSocket networking ---
 
-function connectNetwork(url) {
+function connectNetwork(url: string) {
     if (ws) {
         ws.close();
         ws = null;
@@ -114,28 +124,28 @@ function connectNetwork(url) {
         ws = new WebSocket(url);
         ws.binaryType = 'arraybuffer';
 
-        ws.onopen = function() {
-            postMessage({ type: 'net_status', connected: true });
+        ws.onopen = function () {
+            self.postMessage({ type: 'net_status', connected: true });
         };
 
-        ws.onclose = function() {
-            postMessage({ type: 'net_status', connected: false });
+        ws.onclose = function () {
+            self.postMessage({ type: 'net_status', connected: false });
             ws = null;
         };
 
-        ws.onerror = function() {
-            postMessage({ type: 'error', message: `WebSocket connection failed: ${url}` });
+        ws.onerror = function () {
+            self.postMessage({ type: 'error', message: `WebSocket connection failed: ${url}` });
             ws = null;
         };
 
-        ws.onmessage = function(e) {
+        ws.onmessage = function (e: MessageEvent) {
             // Receive Ethernet frame from TAP proxy → push into emulator WiFi RX
             if (emulator && e.data instanceof ArrayBuffer && e.data.byteLength >= 14) {
                 emulator.wifi_rx_push(new Uint8Array(e.data));
             }
         };
     } catch (e) {
-        postMessage({ type: 'error', message: `WebSocket error: ${e.message}` });
+        self.postMessage({ type: 'error', message: `WebSocket error: ${(e as Error).message}` });
     }
 }
 
@@ -166,7 +176,7 @@ function drainTxToNetwork() {
 }
 
 // Handle messages from main thread
-onmessage = function(e) {
+self.onmessage = function (e: { data: Msg }) {
     const msg = e.data;
 
     switch (msg.type) {
@@ -177,7 +187,7 @@ onmessage = function(e) {
         case 'load':
             if (!wasm) {
                 pendingLoad = msg;
-                postMessage({ type: 'error', message: 'WASM still loading, please wait...' });
+                self.postMessage({ type: 'error', message: 'WASM still loading, please wait...' });
             } else {
                 handleLoad(msg);
             }
@@ -199,16 +209,16 @@ onmessage = function(e) {
             let output = emulator.run_batch(1);
             peris.onBatchEnd(); // peris
             if (emulator.needs_restart()) {
-                if (output) postMessage({ type: 'uart_output', data: output });
+                if (output) self.postMessage({ type: 'uart_output', data: output });
                 output = '';
                 try {
                     emulator.restart();
-                    postMessage({ type: 'restarted' });
+                    self.postMessage({ type: 'restarted' });
                 } catch (err) {
-                    postMessage({ type: 'error', message: `Restart failed: ${err}` });
+                    self.postMessage({ type: 'error', message: `Restart failed: ${err}` });
                 }
             }
-            postMessage({
+            self.postMessage({
                 type: 'step',
                 output: output,
                 pc: emulator.pc(),
@@ -224,14 +234,14 @@ onmessage = function(e) {
             if (emulator) {
                 try {
                     emulator.restart();
-                    postMessage({ type: 'reset', reloaded: true, ...machineInfo() });
+                    self.postMessage({ type: 'reset', reloaded: true, ...machineInfo() });
                     sendSnapshot(true);
                 } catch (err) {
-                    postMessage({ type: 'error', message: `Reset failed: ${err}` });
-                    postMessage({ type: 'reset', reloaded: false });
+                    self.postMessage({ type: 'error', message: `Reset failed: ${err}` });
+                    self.postMessage({ type: 'reset', reloaded: false });
                 }
             } else {
-                postMessage({ type: 'reset', reloaded: false });
+                self.postMessage({ type: 'reset', reloaded: false });
             }
             break;
         }
@@ -251,7 +261,7 @@ onmessage = function(e) {
 
         case 'read_mem':
             if (emulator) {
-                postMessage({
+                self.postMessage({
                     type: 'mem',
                     addr: msg.addr >>> 0,
                     bytes: emulator.read_memory(msg.addr >>> 0, msg.len),
@@ -309,15 +319,15 @@ function runLoop() {
         if (emulator.needs_restart()) {
             // Flush output before restart
             if (allOutput.length > 0) {
-                postMessage({ type: 'uart_output', data: allOutput });
+                self.postMessage({ type: 'uart_output', data: allOutput });
                 allOutput = '';
             }
             try {
                 emulator.restart();
-                postMessage({ type: 'uart_output', data: '\r\n' });
-                postMessage({ type: 'restarted', ...machineInfo() });
+                self.postMessage({ type: 'uart_output', data: '\r\n' });
+                self.postMessage({ type: 'restarted', ...machineInfo() });
             } catch (err) {
-                postMessage({ type: 'error', message: `Restart failed: ${err}` });
+                self.postMessage({ type: 'error', message: `Restart failed: ${err}` });
                 running = false;
             }
             break;
@@ -337,13 +347,13 @@ function runLoop() {
     }
 
     if (allOutput.length > 0) {
-        postMessage({ type: 'uart_output', data: allOutput });
+        self.postMessage({ type: 'uart_output', data: allOutput });
     }
 
     // Send status update. A batch that ran for less than a millisecond has
     // no meaningful rate; report it as 0 rather than a huge or infinite one.
     const elapsedMs = performance.now() - startTime;
-    postMessage({
+    self.postMessage({
         type: 'status',
         pc: emulator.pc(),
         cycles: emulator.cycles(),
@@ -359,17 +369,17 @@ function runLoop() {
 
 // Registers, per-hart PCs, GPIO pads and the watched memory window, rate
 // limited while running; `force` sends one regardless (step, pause, load).
-function sendSnapshot(force) {
+function sendSnapshot(force: boolean) {
     if (!emulator) return;
     const now = performance.now();
     if (!force && now - lastSnapshot < SNAPSHOT_INTERVAL_MS) return;
     lastSnapshot = now;
 
     const harts = emulator.num_harts();
-    const pcs = [];
+    const pcs: number[] = [];
     for (let h = 0; h < harts; h++) pcs.push(emulator.hart_pc(h));
 
-    const snap = {
+    const snap: Msg = {
         type: 'snapshot',
         regs: Array.from(emulator.registers()),
         pcs,
@@ -379,5 +389,5 @@ function sendSnapshot(force) {
     if (memWatch) {
         snap.mem = { addr: memWatch.addr, bytes: emulator.read_memory(memWatch.addr, memWatch.len) };
     }
-    postMessage(snap);
+    self.postMessage(snap);
 }

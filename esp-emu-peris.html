@@ -8,6 +8,9 @@
     <!-- xterm vendored locally (from npm xterm@5.3.0 / xterm-addon-fit@0.8.0,
          unminified build) so the page works without CDN access. -->
     <link rel="stylesheet" href="peris/vendor/css/xterm.css">
+    <!-- esp-emu-peris panel styles (stock page CSS stays inline below,
+         kept verbatim from upstream index.html for easy re-diff) -->
+    <link rel="stylesheet" href="peris/peris.css">
     <style>
         :root {
             --bg: #0e0e10;
@@ -148,154 +151,7 @@
             border-radius: 4px;
         }
 
-        /* ---- right panel tabs (peris) ---- */
-        .panel-tabs {
-            display: flex;
-            border-bottom: 1px solid var(--border);
-            position: sticky; top: 0;
-            background: var(--surface);
-            z-index: 2;
-        }
-        .ptab {
-            flex: 1;
-            background: none;
-            border: 0;
-            border-bottom: 2px solid transparent;
-            color: var(--muted);
-            padding: 10px 8px 8px;
-            font-size: 11.5px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.8px;
-            cursor: pointer;
-        }
-        .ptab:hover { color: var(--text); }
-        .ptab.active { color: var(--accent-text); border-bottom-color: var(--accent); }
-        .pane.hidden { display: none; }
-
-        /* ---- peripherals panel (peris) ---- */
-        #pane-peris { flex: 1; display: flex; flex-direction: column; }
-        #pane-peris.over { outline: 2px dashed var(--accent); outline-offset: -6px; }
-        .peris-toolbar {
-            display: flex; gap: 6px; padding: 10px 14px;
-            border-bottom: 1px solid var(--border);
-            position: sticky; top: 41px; background: var(--surface); z-index: 1;
-        }
-        .peris-toolbar select {
-            flex: 1; min-width: 0;
-            background: var(--bg); border: 1px solid var(--border-strong);
-            border-radius: var(--radius); padding: 4px 8px; font-size: 12px;
-        }
-        #peris-errors {
-            display: none;
-            color: var(--warn); font-size: 11.5px;
-            padding: 6px 14px; border-bottom: 1px solid var(--border);
-            line-height: 1.5;
-        }
-        #peris-cards { flex: 1; padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
-        #peris-empty { padding: 22px 10px; text-align: center; color: var(--faint); font-size: 12px; line-height: 1.6; }
-        #peris-empty strong { color: var(--muted); }
-
-        .peris-card {
-            background: var(--surface-2);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 10px 12px;
-        }
-        .peris-card-head {
-            display: flex; align-items: center; gap: 8px;
-            margin-bottom: 8px;
-        }
-        .dev-title { font-weight: 600; font-size: 12.5px; }
-        .dev-type { color: var(--faint); font-size: 10.5px; font-family: var(--mono); }
-        .dev-remove { margin-left: auto; padding: 1px 7px; font-size: 13px; color: var(--muted); }
-        .dev-remove:hover { color: var(--err); border-color: var(--err); }
-
-        .dev-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin-top: 10px; }
-        .dev-field { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
-        .dev-field span { flex: 1; white-space: nowrap; }
-        .dev-field input[type="text"], .dev-field input[type="number"], .dev-field select {
-            width: 96px; flex-shrink: 0;
-            background: var(--bg); border: 1px solid var(--border-strong);
-            border-radius: 4px; padding: 3px 6px; font-size: 11.5px; outline: none;
-        }
-        .dev-field input[type="color"] { width: 34px; height: 22px; padding: 0; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--bg); }
-        .dev-field input[type="checkbox"] { accent-color: var(--accent); }
-        .dev-field select { max-width: 96px; }
-
-        /* device view bodies */
-        .dev-body { min-height: 74px; display: flex; align-items: center; justify-content: center; }
-        .led-wrap { display: flex; align-items: center; justify-content: center; padding: 6px 0; }
-        .led-bulb {
-            --led-color: #ff4d4d;
-            width: 44px; height: 44px; border-radius: 50%;
-            border: 2px solid color-mix(in srgb, var(--led-color) 45%, #2a2a30);
-            background: radial-gradient(circle at 38% 32%, color-mix(in srgb, var(--led-color) 16%, #1a1a1e), #101014 72%);
-            position: relative;
-            transition: box-shadow 0.15s, border-color 0.15s;
-        }
-        .led-bulb.lit {
-            background: radial-gradient(circle at 38% 32%, #ffffff33 0%, var(--led-color) 46%, color-mix(in srgb, var(--led-color) 55%, #20060a) 100%);
-            box-shadow: 0 0 18px 4px color-mix(in srgb, var(--led-color) 55%, transparent), 0 0 44px 10px color-mix(in srgb, var(--led-color) 25%, transparent);
-            border-color: var(--led-color);
-        }
-        .led-bulb.floating { border-style: dashed; opacity: 0.6; }
-        .led-cap { text-align: center; font-size: 10.5px; color: var(--faint); font-family: var(--mono); margin-top: 6px; }
-
-        .hw-button {
-            min-width: 128px;
-            padding: 16px 22px;
-            border-radius: 10px;
-            border: 1px solid var(--border-strong);
-            background: linear-gradient(180deg, var(--surface-3), var(--surface-2));
-            color: var(--muted);
-            font-weight: 700; font-size: 12px; letter-spacing: 1.2px;
-            cursor: pointer;
-            box-shadow: 0 3px 0 #0a0a0c, inset 0 1px 0 rgba(255,255,255,0.05);
-            transition: transform 0.05s, box-shadow 0.05s, color 0.1s;
-            user-select: none;
-        }
-        .hw-button.down, .hw-button:active {
-            transform: translateY(3px);
-            box-shadow: 0 0 0 #0a0a0c, inset 0 1px 3px rgba(0,0,0,0.5);
-            color: var(--accent-text);
-            border-color: var(--accent);
-        }
-
-        .touch-pad {
-            min-width: 116px; min-height: 74px;
-            border-radius: 12px;
-            border: 1px solid var(--border-strong);
-            background: linear-gradient(180deg, #17171b, #101013);
-            display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
-            color: var(--faint); cursor: pointer; user-select: none;
-            transition: color 0.12s, border-color 0.12s, box-shadow 0.12s;
-        }
-        .touch-pad svg { width: 26px; height: 26px; }
-        .touch-pad .touch-label { font-size: 9.5px; letter-spacing: 1.6px; font-weight: 700; }
-        .touch-pad:hover { color: var(--muted); }
-        .touch-pad.active {
-            color: var(--accent-text);
-            border-color: var(--accent);
-            box-shadow: 0 0 0 3px var(--accent-soft), inset 0 0 24px rgba(255,122,26,0.12);
-        }
-
-        .hw-switch { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
-        .hw-switch input { display: none; }
-        .sw-track {
-            width: 46px; height: 24px; border-radius: 999px;
-            background: var(--bg); border: 1px solid var(--border-strong);
-            position: relative; transition: background 0.15s, border-color 0.15s;
-        }
-        .sw-knob {
-            position: absolute; top: 2px; left: 2px;
-            width: 18px; height: 18px; border-radius: 50%;
-            background: var(--surface-3); border: 1px solid var(--border-strong);
-            transition: left 0.15s, background 0.15s;
-        }
-        .hw-switch input:checked + .sw-track { background: var(--accent-soft); border-color: var(--accent); }
-        .hw-switch input:checked + .sw-track .sw-knob { left: 24px; background: var(--accent); border-color: var(--accent); }
-        .sw-text { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+        /* peris-specific styles live in peris/peris.css */
 
         /* ---- form fields ---- */
         .field { margin-bottom: 10px; }
@@ -643,6 +499,6 @@
 
     <script src="peris/vendor/lib/xterm.js"></script>
     <script src="peris/vendor/lib/xterm-addon-fit.js"></script>
-    <script type="module" src="peris/app.js"></script>
+    <script type="module" src="peris/ui/app.js"></script>
 </body>
 </html>

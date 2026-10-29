@@ -2,6 +2,12 @@
 
 一个外设 = `peris/devices/` 下的一个 ES 模块 + `manifest.json` 里的一行。除此之外不需要改动项目任何其它文件。
 
+> **语言**:插件用**原生 JavaScript**(丢文件即用,无需构建)。框架是 TypeScript 编译
+> 产物,完整契约类型在 `peris/core/types.d.ts`(`DeviceMeta`/`DeviceLike`/`DeviceCtx`/
+> `PinState` 等),插件里可通过 JSDoc 引用获得编辑器提示。注册表加载时会**运行时校验**
+> 元数据(缺 `typeId`/`title`/`pins()`/`defaultConfig` 立即报错),单元测试
+> `tests/unit/devices.test.mjs` 是插件电气语义的范例。
+
 ## 模块导出
 
 ```js

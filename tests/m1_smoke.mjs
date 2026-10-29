@@ -26,15 +26,15 @@ const { initSync, WasmEmulator } = await import(
 );
 initSync(readFileSync(path.join(WWW, 'pkg/esp_emu_bg.wasm')));
 
-const { PerisRuntime } = await import(pathToFileURL(path.join(REPO, 'peris/runtime.js')).href);
+const { PerisRuntime } = await import(pathToFileURL(path.join(REPO, 'peris/core/runtime.js')).href);
 const devices = {};
 for (const m of ['led', 'button', 'touch-button', 'toggle-switch']) {
     devices[m] = await import(pathToFileURL(path.join(REPO, `peris/devices/${m}.js`)).href);
 }
 const registry = {
     has: (t) => t in devices,
-    meta: (t) => devices[t].Device,
-    Device: (t) => devices[t].Device,
+    meta: (t) => devices[t]?.Device,
+    Device: (t) => devices[t]?.Device,
     View: () => null,
     types: () => Object.keys(devices).map((t) => ({ typeId: t, title: devices[t].Device.title })),
     errors: [],
@@ -104,6 +104,7 @@ check('S4 toggle command updates state', swState?.state?.on === true);
 msgs.length = 0;
 rt.flushStates(true);
 runBatches(400); // boot + into the first P1 blink window
+await new Promise((r) => setTimeout(r, 60)); // trailing state flush (33 ms throttle)
 const ledStates = states().filter((s) => s.id === 'led-1');
 const sawOn = ledStates.some((s) => s.state.on === true);
 const sawOff = ledStates.some((s) => s.state.on === false);

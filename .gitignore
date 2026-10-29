@@ -149,3 +149,7 @@ vite.config.ts.timestamp-*
 .turbo
 .zcode/
 tests/firmware/peris_probe/build/
+
+# build output (compiled from src/ by tsc)
+/peris/core/
+/peris/ui/
