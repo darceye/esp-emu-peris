@@ -17,7 +17,7 @@ export class WorkerClient {
     private handlers = new Set<(msg: Msg) => void>();
     onerror: ((message: string) => void) | null = null;
 
-    constructor(workerUrl = 'peris/core/worker.js') {
+    constructor(workerUrl = 'build/core/worker.js') {
         this.worker = new Worker(workerUrl, { type: 'module' });
         this.worker.onmessage = (e: MessageEvent) => {
             for (const h of this.handlers) h(e.data);

@@ -5,10 +5,10 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Sigbus } from '../../peris/core/sigbus.js';
-import { gpioCount, validPins, absentPins } from '../../peris/core/chips.js';
-import { mmioFor, funcOutSelAddr, ioMuxAddr } from '../../peris/core/mmio.js';
-import { normaliseConfig, validateDeviceModule } from '../../peris/core/types.js';
+import { Sigbus } from '../../build/core/sigbus.js';
+import { gpioCount, validPins, absentPins } from '../../build/core/chips.js';
+import { mmioFor, funcOutSelAddr, ioMuxAddr } from '../../build/core/mmio.js';
+import { normaliseConfig, validateDeviceModule } from '../../build/core/types.js';
 
 // ---- sigbus ----
 

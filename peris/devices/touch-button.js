@@ -10,6 +10,7 @@ import { Device as ButtonDevice } from './button.js';
 
 export class Device extends ButtonDevice {
     static typeId = 'touch-button';
+    static version = '1.0.0';
     static title = 'Touch button';
     static category = 'basic';
     static description = 'Touch-style pad driving a GPIO input (touch peripheral itself is not emulated — firmware must read it as GPIO).';

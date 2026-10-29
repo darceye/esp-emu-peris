@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import * as led from '../../peris/devices/led.js';
 import * as button from '../../peris/devices/button.js';
 import * as toggle from '../../peris/devices/toggle-switch.js';
-import { validateDeviceModule } from '../../peris/core/types.js';
+import { validateDeviceModule } from '../../build/core/types.js';
 
 /** Recording stub for the runtime ctx handed to device constructors. */
 function makeCtx() {

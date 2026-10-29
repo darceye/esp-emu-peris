@@ -13,7 +13,7 @@ import os
 import shutil
 
 REPO = os.path.dirname(os.path.abspath(__file__))
-ITEMS = ['esp-emu-peris.html', 'peris', 'examples']
+ITEMS = ['esp-emu-peris.html', 'build', 'peris', 'examples']
 
 
 def sync(www, clean=False):

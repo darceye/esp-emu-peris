@@ -26,7 +26,7 @@ const { initSync, WasmEmulator } = await import(
 );
 initSync(readFileSync(path.join(WWW, 'pkg/esp_emu_bg.wasm')));
 
-const { PerisRuntime } = await import(pathToFileURL(path.join(REPO, 'peris/core/runtime.js')).href);
+const { PerisRuntime } = await import(pathToFileURL(path.join(REPO, 'build/core/runtime.js')).href);
 const devices = {};
 for (const m of ['led', 'button', 'touch-button', 'toggle-switch']) {
     devices[m] = await import(pathToFileURL(path.join(REPO, `peris/devices/${m}.js`)).href);

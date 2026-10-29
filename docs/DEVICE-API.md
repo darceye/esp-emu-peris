@@ -13,6 +13,7 @@
 ```js
 export class Device {          // 运行在 worker,与模拟器交互
     static typeId      = 'led';       // 唯一、稳定、kebab-case
+    static version     = '1.0.0';     // 插件自身版本(卡片头展示,登记于 docs/CHANGELOG.md)
     static title       = 'LED';       // UI 显示名
     static category    = 'basic';     // Add 菜单分组
     static description = '...';       // 一行说明(tooltip)

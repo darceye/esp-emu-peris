@@ -4,6 +4,7 @@
  */
 export class Device {
     static typeId = 'toggle-switch';
+    static version = '1.0.0';
     static title = 'Toggle switch';
     static category = 'basic';
     static description = 'Latching switch driving a GPIO input level.';

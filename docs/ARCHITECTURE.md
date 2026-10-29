@@ -5,7 +5,7 @@
 ```
 ┌───────────────────────────────── 页面(page)─────────────────────────────────┐
 │ esp-emu-peris.html   上游样式原块(便于升级 diff)+ <link peris/peris.css>    │
-│ peris/ui/*  (TypeScript 编译产物)                                           │
+│ build/ui/*  (TypeScript 编译产物)                                           │
 │   app.ts          编排器:机器状态、Run/Pause/固件/网络控件、消息路由          │
 │   worker-client   Worker 唯一入口(其它模块一律经由它收发消息)               │
 │   terminal / chart / debug-panels     UART 控制台 / 性能图 / Debug 只读面板  │
@@ -17,11 +17,11 @@
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                            ← peris_state / peris_command →                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ peris/core/worker.ts  上游 worker 复刻 + 6 处 peris: 钩子(唯一可碰上游逻辑) │
-│ peris/core/runtime.ts 设备宿主:配置校验/实例化/命令/状态节流推送             │
-│ peris/core/sigbus.ts  引脚信号总线:每批 gpio_state() 差分分发               │
-│ peris/core/registry.ts 插件注册表(manifest 驱动 + 元数据校验)              │
-│ peris/core/{types,protocol,chips,mmio}.ts  契约/消息/芯片表/寄存器表         │
+│ build/core/worker.ts  上游 worker 复刻 + 6 处 peris: 钩子(唯一可碰上游逻辑) │
+│ build/core/runtime.ts 设备宿主:配置校验/实例化/命令/状态节流推送             │
+│ build/core/sigbus.ts  引脚信号总线:每批 gpio_state() 差分分发               │
+│ build/core/registry.ts 插件注册表(manifest 驱动 + 元数据校验)              │
+│ build/core/{version,types,protocol,chips,mmio}.ts  版本/契约/消息/芯片表/寄存器表 │
 │ worker 侧设备 Device(peris/devices/*.js 的 Device 类)                      │
 └───────────────────────────┬─────────────────────────────────────────────────┘
                             │ WasmEmulator(闭源 wasm,只此一处触碰)
@@ -57,9 +57,10 @@
 ## 4. 目录职责
 
 ```
-src/core/        worker 侧框架(TS 源)        → 编译到 peris/core/
-src/ui/          页面侧模块(TS 源)            → 编译到 peris/ui/
-peris/devices/   设备插件(JS 源,不编译;manifest.json 注册)
+src/core/        worker 侧框架(TS 源)        → 编译到 build/core/
+src/ui/          页面侧模块(TS 源)            → 编译到 build/ui/
+build/           tsc 产物(未入 git;HTML/worker/测试都引用这里)
+peris/devices/   设备插件(JS 源,不编译;manifest.json 注册;各自版本号)
 peris/vendor/    xterm 本地化
 peris/peris.css  peris 专属样式
 tests/unit/      单元测试(node:test,零依赖)

@@ -150,10 +150,11 @@ export class PerisPanel {
         card.className = 'peris-card';
         card.dataset.id = devCfg.id;
 
-        // header: title, type tag, remove
+        // header: title, type tag (with plugin version), remove
+        const ver = meta.version ? ` v${meta.version}` : '';
         const head = document.createElement('div');
         head.className = 'peris-card-head';
-        head.innerHTML = `<span class="dev-title"></span><span class="dev-type">${meta.title} · ${devCfg.type}</span>`;
+        head.innerHTML = `<span class="dev-title"></span><span class="dev-type">${meta.title} · ${devCfg.type}${ver}</span>`;
         const remove = document.createElement('button');
         remove.className = 'btn small dev-remove';
         remove.title = 'Remove device';

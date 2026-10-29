@@ -11,6 +11,7 @@ import { PerfPanel } from './chart.js';
 import { DebugPanels } from './debug-panels.js';
 import { PerisPanel } from './peris-panel.js';
 import { gpioCount, absentPins } from '../core/chips.js';
+import { PERIS_VERSION } from '../core/version.js';
 import type { PerisEvent } from '../core/protocol.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -43,8 +44,11 @@ class App {
     private machine: MachineInfo = { chip: 'esp32c3', isXtensa: false, numHarts: 1, cyclesPerUs: 160 };
 
     start() {
+        // version badges (header span + terminal banner)
+        const h1 = document.querySelector('header h1 span');
+        if (h1) h1.textContent = `v0.51.0 + peris ${PERIS_VERSION}`;
         this.term = new TerminalView($('terminal-container'));
-        this.term.banner();
+        this.term.banner(PERIS_VERSION);
         this.term.onData((bytes) => {
             if (this.firmwareLoaded) this.client.send({ type: 'uart_input', data: bytes });
         });

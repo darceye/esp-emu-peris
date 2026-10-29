@@ -5,6 +5,7 @@
  */
 export class Device {
     static typeId = 'led';
+    static version = '1.0.0';
     static title = 'LED';
     static category = 'basic';
     static description = 'Single-colour LED wired to a GPIO output.';

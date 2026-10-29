@@ -90,10 +90,13 @@ export class TerminalView {
         this.term.clear();
     }
 
-    banner() {
+    banner(perisVersion = '') {
+        const pad = (s: string, n: number) => s.padEnd(n, ' ').slice(0, n);
+        const tag = perisVersion ? `+ peris ${perisVersion}` : '';
         this.writeln('\x1b[1;33m╔══════════════════════════════════════╗');
-        this.writeln('║  ESP-EMU + PERIS peripherals v0.51.0 ║');
-        this.writeln('║  Load a firmware .bin to begin       ║');
+        this.writeln(`║   ESP-EMU ESP32 Emulator v0.51.0     ║`);
+        this.writeln(`║   ${pad(tag, 37)}║`);
+        this.writeln('║   Load a firmware .bin to begin      ║');
         this.writeln('╚══════════════════════════════════════╝\x1b[0m');
         this.writeln('');
     }

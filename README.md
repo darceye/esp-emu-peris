@@ -4,22 +4,24 @@
 
 ```
 esp-emu-peris.html      入口页面(UART0 控制台 + 右侧 Peripherals/Debug 双标签)
-src/                    TypeScript 源码(npm run build → peris/core + peris/ui)
-  core/                 worker 侧框架:types/protocol/chips/mmio/sigbus/registry/runtime/worker
+src/                    TypeScript 源码(npm run build → build/)
+  core/                 worker 侧框架:version/types/protocol/chips/mmio/sigbus/registry/runtime/worker
   ui/                   页面侧模块:app/worker-client/terminal/chart/debug-panels/peris-panel/config-editor
+build/                  编译产物(tsc,未入 git;core/ + ui/)
 peris/
-  core/  ui/            编译产物(tsc,未入 git;npm run build 生成)
-  devices/              外设插件(原生 JS,丢文件即用):led/button/touch-button/toggle-switch
+  devices/              外设插件(原生 JS,丢文件即用,含各自版本号):led/button/touch-button/toggle-switch
   vendor/ peris.css     xterm 本地化 + 面板样式
 examples/               接线配置示例(JSON,可直接 Import)
 tests/unit/             单元测试(node:test)
 tests/m1_smoke.mjs      集成冒烟(真实 wasm+固件全链路)
 tests/m0_probe.mjs      模拟器能力探针(上游升级时先跑)
 tests/firmware/         ESP-IDF 测试固件
-docs/                   ARCHITECTURE / FEASIBILITY / DEVICE-API / UPGRADE / ROADMAP
+docs/                   ARCHITECTURE / EMU-API / FEASIBILITY / DEVICE-API / CHANGELOG / UPGRADE / ROADMAP
+AGENT.md                环境/架构/坑(贡献前必读)
 ```
 
-架构、数据流、状态归属与扩展点见 **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**。
+架构、数据流、状态归属与扩展点见 **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**;
+版本规则见 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**(项目版本三处同步,设备有独立版本)。
 
 ## 快速开始
 

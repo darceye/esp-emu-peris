@@ -4,8 +4,8 @@
  * peripheral is: drop a module into peris/devices/ and add one line to
  * peris/devices/manifest.json. Nothing else in the tree changes.
  *
- * Compiled location: peris/core/registry.js → devices live at
- * ../devices/ relative to this module.
+ * Compiled location: build/core/registry.js → hand-written device plugins
+ * live at ../../peris/devices/ relative to this module.
  */
 import type { DeviceMeta, ViewClass } from './types.js';
 import { validateDeviceModule } from './types.js';
@@ -33,9 +33,10 @@ interface LoadedEntry {
 
 export async function loadRegistry(baseUrl: string = import.meta.url): Promise<Registry> {
     const url = (p: string) => new URL(p, baseUrl).href;
-    // Manifest module paths are relative to peris/devices/.
-    const deviceUrl = (m: string) => (/^([a-z]+:|\/)/i.test(m) ? m : '../devices/' + m.replace(/^\.\//, ''));
-    const manifest = await (await fetch(url('../devices/manifest.json'))).json() as { devices: Array<{ module: string }> };
+    const DEVICES_DIR = '../../peris/devices/';
+    // Manifest module paths are relative to the devices directory.
+    const deviceUrl = (m: string) => (/^([a-z]+:|\/)/i.test(m) ? m : DEVICES_DIR + m.replace(/^\.\//, ''));
+    const manifest = await (await fetch(url(DEVICES_DIR + 'manifest.json'))).json() as { devices: Array<{ module: string }> };
 
     const modules = new Map<string, LoadedEntry>();
     const errors: string[] = [];

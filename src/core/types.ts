@@ -62,6 +62,8 @@ export interface PerisConfig {
 export interface DeviceMeta {
     readonly typeId: string;
     readonly title: string;
+    /** Plugin's own version, shown in the card header. */
+    readonly version?: string;
     readonly category?: string;
     readonly description?: string;
     readonly defaultConfig: Record<string, unknown>;
@@ -118,6 +120,9 @@ export function validateDeviceModule(mod: unknown): string | null {
     if (!Dev || typeof Dev !== 'function') return 'module does not export a Device class';
     if (typeof Dev.typeId !== 'string' || !Dev.typeId) return 'Device.typeId must be a non-empty string';
     if (typeof Dev.title !== 'string' || !Dev.title) return `"${Dev.typeId}": Device.title must be a non-empty string`;
+    if (Dev.version !== undefined && typeof Dev.version !== 'string' && typeof Dev.version !== 'number') {
+        return `"${Dev.typeId}": Device.version must be a string like "1.0.0"`;
+    }
     if (typeof Dev.pins !== 'function') return `"${Dev.typeId}": Device.pins(cfg) is required (conflict detection)`;
     if (!Dev.defaultConfig || typeof Dev.defaultConfig !== 'object') return `"${Dev.typeId}": Device.defaultConfig must be an object`;
     if (Dev.configSchema !== undefined && !Array.isArray(Dev.configSchema)) return `"${Dev.typeId}": Device.configSchema must be an array`;

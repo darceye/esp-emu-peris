@@ -6,6 +6,7 @@
  */
 export class Device {
     static typeId = 'button';
+    static version = '1.0.0';
     static title = 'Push button';
     static category = 'basic';
     static description = 'Momentary button driving a GPIO input (active-low by default).';
