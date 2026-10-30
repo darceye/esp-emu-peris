@@ -1,94 +1,137 @@
-# 变更日志
+**English** | [简体中文](CHANGELOG.zh-cn.md)
 
-版本三处同步:`src/core/version.ts`、`package.json`、本文件。
-规则:主版本=协议/架构破坏性变更;次版本=新能力;修订=修复与小改。
+# Changelog
+
+The project version is synced in three places: `src/core/version.ts`,
+`package.json`, and this file (kept in both languages — CHANGELOG.md /
+CHANGELOG.zh-cn.md).
+Rules: major = breaking protocol/architecture change; minor = new capability;
+patch = fixes and small changes.
+
+## peris 0.5.1
+
+- **Bilingual documentation**: every document now has an English version under
+  the default filename and a Chinese version as `*.zh-cn.md` (README, AGENT,
+  docs/*); the two cross-link in their first line for one-click switching, and
+  in-document links stay within the same language. AGENT.md §7 records the
+  keep-both-languages-in-sync rule.
 
 ## peris 0.5.0
 
-- **恢复缓存时自动选中芯片**:localStorage 保存的配置附带 `chip`,页面加载时
-  自动同步 Target 芯片下拉与机器信息(GPIO 网格、寄存器表、引脚可选项随之
-  正确),不用再手选一次。未知芯片名安全忽略。
-- **面板头部合并**:项目名(导出文件名)输入框移到 `PERIPHERALS` 标题后,
-  保存/打开改为图标按钮紧跟其后(节约一行版面);工具栏只留 添加下拉+图标
-  Add 按钮。
-- 实现要点:面板构造提前到 GPIO 默认初始化之前,恢复的芯片才能喂给初始网格;
-  `PerisPanelDeps` 新增 `selectChip(chip)`。
+- **Chip auto-selected when the cached wiring loads**: the localStorage config
+  now carries `chip`; on page load the Target chip select and machine info are
+  synced automatically (GPIO grid, register table and pin options follow), so
+  the user does not have to pick the chip again. Unknown chip names are
+  safely ignored.
+- **Panel head merged**: the project-name (export file name) input moved next
+  to the `PERIPHERALS` title, followed by save/open icon buttons (saves one
+  toolbar row); the toolbar now holds only the add select + an icon-only Add
+  button.
+- Implementation notes: the PerisPanel is constructed before the GPIO
+  defaults are initialised so the restored chip feeds the initial grid;
+  `PerisPanelDeps` gained `selectChip(chip)`.
 
 ## peris 0.4.0
 
-- **导出文件名可设置**:外设工具栏新增文件名输入框,导出按它命名(自动去非法
-  字符、补单个 .json 后缀);留空回退自动名 `peris-{chip}-{date}.json`。输入
-  记忆于 localStorage(`peris.exportName.v1`)。命名逻辑为纯函数
-  `exportFileName()`(单测覆盖)。
-- **导出附带固件信息**:导出的 JSON 新增 `firmware {name, size, path?}` 备忘
-  字段(芯片 `chip` 原已有)。受浏览器安全模型限制,磁盘全路径一般拿不到:
-  `path` 仅在宿主环境暴露非标准 `File.path`/`filePath` 属性时填充,常规浏览器
-  只有文件名与大小。导入时忽略该字段,不自动加载固件。
-- 工具栏改为两行(添加行 + 导入导出行)。
+- **Configurable export file name**: a file-name input in the peripherals
+  toolbar; exports use it (illegal characters stripped, a single .json suffix
+  appended); empty falls back to the auto name `peris-{chip}-{date}.json`.
+  The input is remembered in localStorage (`peris.exportName.v1`). Naming
+  lives in the pure function `exportFileName()` (unit-tested).
+- **Firmware provenance in exports**: exported JSON gains an informational
+  `firmware {name, size, path?}` field (the `chip` field already existed).
+  Limited by the browser security model, the full disk path is usually
+  unavailable: `path` is filled only when the host exposes the non-standard
+  `File.path`/`filePath` property; regular browsers get name and size only.
+  Import ignores the field and never auto-loads firmware.
+- Toolbar split into two rows (add row + import/export row).
 
 ## peris 0.3.1
 
-- **修复**:LED 行内图标颜色不随配置(与详情灯泡不一致)。根因有二:面板先
-  `setConfig` 后 `rowIcon`(图标元素尚不存在,颜色没应用到它),插件里两处各自
-  设色。现 led 插件统一 `setColour()` 同时应用到灯泡与行图标,面板固定
-  **先 rowIcon 后 setConfig**。
-- **修复**:加载固件换芯片后,展开详情的 GPIO 选项仍停留在旧芯片(行内 chip
-  一直正确)。引脚选项构建抽取为 `fillPinOptions()` 单一实现(详情编辑器与
-  行内 chip 共用);`PerisPanel.refreshForChip()` 在固件加载/复位重载后检测
-  芯片变化并重建详情编辑器。
-- **AGENT.md 新增铁律 §3.8**:"同语义代码必须复用"——以上两个 bug 皆为复制
-  代码只改一处所致;同时登记两条 bug 记录(§4)。
-- `npm test`/`npm run test:unit` 改为显式传 .test.mjs 文件列表(AGENT.md §1
-  记录的 Windows/Git Bash 目录解析坑,目录形式在本机直接 MODULE_NOT_FOUND)。
+- **Fix**: the LED row-icon colour did not follow the config (disagreed with
+  the details bulb). Two root causes: the panel called `setConfig` before
+  `rowIcon` (the icon element did not exist yet when the colour was applied),
+  and the plugin styled the two visuals separately. The led plugin now has a
+  single `setColour()` applied to both bulb and row icon, and the panel
+  fixed the order: **`rowIcon` first, then `setConfig`**.
+- **Fix**: after loading firmware for another chip, the details editor's GPIO
+  options stayed on the old chip (the row chip was always correct). Pin-option
+  building was extracted into `fillPinOptions()` as the single implementation
+  (shared by the details editor and the row chip);
+  `PerisPanel.refreshForChip()` detects chip changes after firmware
+  load/reset-reload and rebuilds the details editors.
+- **AGENT.md gained iron rule §3.8**: "same-semantic code must be reused" —
+  both bugs above came from copying code and changing one copy; two bug
+  records added (§4).
+- `npm test`/`npm run test:unit` now pass the explicit .test.mjs file list
+  (the Windows/Git Bash directory-resolution pitfall recorded in AGENT.md §1;
+  the directory form fails outright with MODULE_NOT_FOUND on this machine).
 
 ## peris 0.3.0
 
-- **三栏同屏布局**:外设面板独立成栏,置于 UART 控制台与 Debug 之间,与 Debug
-  同宽(360px,窄屏自适应收窄/堆叠);移除 Peripherals/Debug 标签切换,三栏同时可见。
-  外设面板改为内部滚动(工具栏常驻),Debug 面板加标题条。
-- **行式外设列表**(类 Photoshop 图层):每外设一行——左侧依次为交互图标、名称
-  (点击原地改名)、GPIO 号方框(点击弹出选单)、V/G 闲置电平徽章(点击翻转,
-  V=上拉到 VCC、G=下拉到 GND);右侧靠齐展开按钮、删除按钮、拖动排序柄。
-  展开后的详情区(类 Blender 属性分组)显示设备控件主体 + 全量配置编辑器
-  (一条属性一行);行内放不下的高级功能都收进详情。
-- **View API 扩展**(可选项,向后兼容):`View.rowIcon(el)` 定制行内交互图标;
-  View 构造函数新增第三参 `host.updateConfig(patch)`,供 View 请求改配置
-  (如 LED 行内图标点击换色);configSchema 新增 `chip:'pull'` /
-  `pullWhenChecked` 字段声明 V/G 徽章。类型契约见 `build/core/types.d.ts`。
-- **拖动排序**:拖柄按下才允许拖拽(避免误触);松手后按 DOM 序回写配置并持久化
-  (设备集合不变,不重建 worker 实例)。文件拖放导入与行排序互不干扰(按
-  dataTransfer 类型区分)。
-- 新增单测:内置插件 rowIcon 存在性、`rowChips()` 引脚/V·G 徽章推导
-  (含 GPIO0、`pullWhenChecked:'low'` 反例)。
+- **Three-pane layout**: the peripherals pane became its own column between
+  the UART console and Debug, the same width as Debug (360px, narrowing/
+  stacking on small screens); the Peripherals/Debug tab switch was removed —
+  all three panes are visible at once. The peripherals pane scrolls
+  internally (toolbar stays visible); the Debug pane gained a title bar.
+- **Row-based peripherals list** (photoshop-layers style): each device is one
+  row — on the left the interactive icon, the name (click to rename in
+  place), the GPIO-number box (click for a picker) and the V/G idle-pull
+  badge (click to flip; V = pull-up to VCC, G = pull-down to GND); on the
+  right the expand button, remove button and drag-sort grip. The expanded
+  details (blender-style property groups) show the device widget body + the
+  full config editor (one property per line); advanced features that do not
+  fit the row live there.
+- **View API extension** (optional, backwards compatible): `View.rowIcon(el)`
+  customises the row icon; the View constructor gained a third argument
+  `host.updateConfig(patch)` so Views can request config changes (e.g. the
+  LED row icon's colour picker); configSchema gained `chip:'pull'` /
+  `pullWhenChecked` to declare the V/G badge. Type contracts in
+  `build/core/types.d.ts`.
+- **Drag sorting**: dragging is armed only while the grip is held (no
+  accidental drags); on release the DOM order is written back to the config
+  and persisted (device set unchanged → no worker rebuild). File-drop import
+  and row sorting do not interfere (distinguished by dataTransfer type).
+- New unit tests: rowIcon presence on built-in plugins, `rowChips()` pin/V·G
+  badge derivation (including GPIO0 and a `pullWhenChecked:'low'` case).
 
 ## peris 0.2.0
 
-- **架构重构**:框架层 TypeScript 化(`src/core` + `src/ui`,tsc 逐文件编译到
-  `build/`,不打包);千行 app.js 拆为 7 个 UI 模块;peris 样式独立 `peris/peris.css`;
-  chips/MMIO/协议常量单一来源;构建产物集中 `build/`(gitignore)。
-- **测试金字塔**:单元测试(node:test,14 用例)+ 集成冒烟 + M0 探针接入 npm scripts。
-- **修复**:状态推送节流窗口静默丢弃最后一次变化的缺陷(尾随 flush)。
-- **版本管理**:项目版本(`version.ts`/`package.json`/本文件)与设备版本
-  (`Device.version`,卡片头展示,registry 校验)。
-- **文档**:ARCHITECTURE.md(分层/数据流/状态归属)、EMU-API.md(闭源 wasm 能力
-  摘要)、AGENT.md(环境坑与约定)。
-- xterm 本地化(无 CDN 依赖)。
+- **Architecture refactor**: framework layer moved to TypeScript
+  (`src/core` + `src/ui`, tsc per-file compilation to `build/`, no bundling);
+  the 1000-line app.js split into 7 UI modules; peris styles extracted into
+  `peris/peris.css`; chips/MMIO/protocol constants single-sourced; build
+  output centralised in `build/` (gitignored).
+- **Test pyramid**: unit tests (node:test, 14 cases) + integration smoke +
+  M0 probe wired into npm scripts.
+- **Fix**: silently dropped last state inside the throttle window (trailing
+  flush).
+- **Versioning**: project version (`version.ts`/`package.json`/CHANGELOG)
+  and device versions (`Device.version`, shown in the row header, validated
+  by the registry).
+- **Docs**: ARCHITECTURE.md (layering/data flow/state ownership), EMU-API.md
+  (closed-source wasm capability summary), AGENT.md (environment pitfalls and
+  conventions).
+- xterm vendored locally (no CDN dependency).
 
 ## peris 0.1.0
 
-- M0 可行性验证(GPIO 轮询/输入中断 ✅;引脚级 PWM/RMT 不可见;LEDC 寄存器与
-  RMT RAM 可读)→ docs/FEASIBILITY.md。
-- M1 外设框架:入口页(Peripherals/Debug 双标签)、自有 worker(上游复刻+
-  采样钩子)、设备插件 API v1(manifest 注册)、LED/按键/触摸按键/拨动开关、
-  配置导入导出 + localStorage、serve.py/sync_www.py、IDF 测试固件与探针。
+- M0 feasibility verification (GPIO polling/input interrupts ✅; pin-level
+  PWM/RMT invisible; LEDC registers and RMT RAM readable) → docs/FEASIBILITY.
+- M1 peripherals framework: entry page (Peripherals/Debug tabs at the time),
+  own worker (upstream replica + sampling hooks), device plugin API v1
+  (manifest registration), LED/button/touch button/toggle switch, config
+  import/export + localStorage, serve.py/sync_www.py, IDF test firmware and
+  probes.
 
-## 设备插件版本
+## Device plugin versions
 
-| typeId | 版本 | 变更 |
+| typeId | version | change |
 |---|---|---|
-| led | 1.1.1 | 修复:行图标颜色与配置不一致——统一 setColour 应用到灯泡+行图标 |
-| button | 1.1.0 | 行内按压图标(press/release);activeLow 声明为 V/G 徽章 |
-| touch-button | 1.1.0 | 行内触摸图标(继承 button 的徽章声明) |
-| toggle-switch | 1.1.0 | 行内迷你拨动开关(点击 toggle);activeLow 声明为 V/G 徽章 |
+| led | 1.1.1 | fix: row-icon colour disagreed with config — one `setColour` for bulb + row icon |
+| button | 1.1.0 | row press icon (press/release); activeLow declared as the V/G badge |
+| touch-button | 1.1.0 | row touch icon (inherits button's badge declaration) |
+| toggle-switch | 1.1.0 | mini row switch (click to toggle); activeLow declared as the V/G badge |
 
-历史:led/button/touch-button/toggle-switch 1.0.0 初版(见 peris 0.1.0/0.2.0 条目)。
+History: led/button/touch-button/toggle-switch 1.0.0 initial versions (see the
+peris 0.1.0/0.2.0 entries).

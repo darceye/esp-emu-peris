@@ -1,93 +1,111 @@
-# esp-emu-peris 外设接口规范(v1)
+**English** | [简体中文](DEVICE-API.zh-cn.md)
 
-一个外设 = `peris/devices/` 下的一个 ES 模块 + `manifest.json` 里的一行。除此之外不需要改动项目任何其它文件。
+# esp-emu-peris peripheral interface spec (v1)
 
-> **语言**:插件用**原生 JavaScript**(丢文件即用,无需构建)。框架是 TypeScript 编译
-> 产物,完整契约类型在 `peris/core/types.d.ts`(`DeviceMeta`/`DeviceLike`/`DeviceCtx`/
-> `PinState` 等),插件里可通过 JSDoc 引用获得编辑器提示。注册表加载时会**运行时校验**
-> 元数据(缺 `typeId`/`title`/`pins()`/`defaultConfig` 立即报错),单元测试
-> `tests/unit/devices.test.mjs` 是插件电气语义的范例。
+A peripheral = one ES module under `peris/devices/` + one line in
+`manifest.json`. Nothing else in the project needs to change.
 
-## 模块导出
+> **Language**: plugins are **plain JavaScript** (drop-in, no build). The
+> framework is compiled TypeScript; the full contract types live in
+> `peris/core/types.d.ts` (`DeviceMeta`/`DeviceLike`/`DeviceCtx`/`PinState`
+> etc.) and can be referenced from JSDoc for editor hints. The registry
+> **validates metadata at load time** (a missing `typeId`/`title`/`pins()`/
+> `defaultConfig` errors immediately); the unit tests in
+> `tests/unit/devices.test.mjs` are the reference for electrical semantics.
+
+## Module exports
 
 ```js
-export class Device {          // 运行在 worker,与模拟器交互
-    static typeId      = 'led';       // 唯一、稳定、kebab-case
-    static version     = '1.0.0';     // 插件自身版本(卡片头展示,登记于 docs/CHANGELOG.md)
-    static title       = 'LED';       // UI 显示名
-    static category    = 'basic';     // Add 菜单分组
-    static description = '...';       // 一行说明(tooltip)
-    static defaultConfig = {...};     // 新建实例的默认配置
-    static configSchema = [           // 通用配置编辑器字段(展开详情内,一条一行)
+export class Device {          // runs in the worker, talks to the emulator
+    static typeId      = 'led';       // unique, stable, kebab-case
+    static version     = '1.0.0';     // plugin's own version (row header; logged in docs/CHANGELOG.md)
+    static title       = 'LED';       // UI display name
+    static category    = 'basic';     // Add-menu grouping
+    static description = '...';       // one-line explanation (tooltip)
+    static defaultConfig = {...};     // defaults for new instances
+    static configSchema = [           // generic config editor fields (in the
+                                  // expanded details, one per line)
         { key: 'pin',    label: 'GPIO pin', type: 'pin' },
         { key: 'color',  label: 'Colour',   type: 'color' },
         { key: 'name',   label: 'Label',    type: 'text' },
-        // type 还支持: number(min/max/step)、select(options:[{value,label}])、checkbox
-        // checkbox 可加 chip:'pull' + pullWhenChecked:'high'|'low'
-        //   → 设备行上显示 V/G 闲置电平徽章(点击翻转),详见下文"行式 UI"
+        // also supported: number(min/max/step), select(options:[{value,label}]), checkbox
+        // a checkbox may add chip:'pull' + pullWhenChecked:'high'|'low'
+        //   → the device row shows a V/G idle-pull badge (click to flip),
+        //     see "Row UI conventions" below
     ];
-    static pins(cfg) { return [cfg.pin]; }   // 声明占用的 GPIO(用于冲突检测)
+    static pins(cfg) { return [cfg.pin]; }   // claimed GPIOs (conflict detection)
 
-    constructor(ctx, cfg) {}          // cfg = { id, type, ...设备配置 }
-    onPinState(pin, s) {}             // 引脚输出变化回调 s={out, oe, cycles}
-    onCommand(cmd, params) {}         // 页面 View 发来的用户操作
-    onEmuReady() {}                   // 模拟器(重)加载后:重新驱动输入电平
-    getState() { return {...}; }      // 可序列化状态,推给页面 View(~30fps)
-    destroy() {}                      // 释放/恢复引脚
+    constructor(ctx, cfg) {}          // cfg = { id, type, ...device settings }
+    onPinState(pin, s) {}             // pin-output change callback s={out, oe, cycles}
+    onCommand(cmd, params) {}         // user action sent from the page View
+    onEmuReady() {}                   // emulator (re)loaded: re-drive input levels
+    getState() { return {...}; }      // serialisable state pushed to the View (~30fps)
+    destroy() {}                      // release / restore pins
 }
 
-export class View {             // 运行在页面,渲染设备视图
-    constructor(el, sendCmd, host) {}  // el=详情区主体容器; sendCmd(cmd, params);
-                                       // host.updateConfig(patch) 请求改本设备配置
-    rowIcon(el) {}               // 可选:行内交互图标(el≈24px 容器),见下文
-    render(state) {}             // state 来自 Device.getState();行图标与详情主体一起驱动
-    setConfig(cfg) {}            // 可选:配置编辑后回调(如换 LED 颜色)
+export class View {             // runs on the page, renders the device view
+    constructor(el, sendCmd, host) {}  // el = details body container;
+                                       // sendCmd(cmd, params);
+                                       // host.updateConfig(patch) requests a config change
+    rowIcon(el) {}               // optional: compact interactive row icon (~24px), see below
+    render(state) {}             // state comes from Device.getState(); drives icon and body together
+    setConfig(cfg) {}            // optional: called after config edits (e.g. LED colour)
 }
 ```
 
-## 行式 UI 约定(0.3.0+)
+## Row UI conventions (0.3.0+)
 
-外设面板是三栏布局中的独立一栏(控制台 | 外设 | Debug),每种外设占一行:
+The peripherals pane is its own column in the three-pane layout
+(console | peripherals | debug); each device occupies one row:
 
 ```
-[交互图标] [名称] [GPIO号] [V/G]                [▸展开] [×删除] [⠿拖动]
+[icon] [name] [GPIO#] [V/G]                    [▸ expand] [× remove] [⠿ drag]
 ```
 
-- **交互图标**(`View.rowIcon(el)`):可点击的迷你控件,操作语义由插件定义——
-  LED 点击换色(取色器,经 `host.updateConfig({color})` 写回配置)、按键按下/
-  松开(连发 press/release)、拨动开关点击 toggle。`render(state)` 里同步刷新
-  图标状态(亮灭/按下/ON)。不实现 rowIcon 时显示首字母占位块。
-  **调用顺序**:面板固定先 `rowIcon` 后 `setConfig`,配置式样可覆盖到图标;
-  图标与详情主体是同一状态的两个视觉,插件必须共用同一 setter/render
-  (参考 led.js 的 `setColour()`),禁止为图标单写一份样式逻辑。
-- **名称 / GPIO 方框 / V·G 徽章**:由面板通用渲染,点击原地修改
-  (名称与 GPIO 走内联编辑,V/G 徽章直接翻转)。GPIO 方框取 schema 第一个
-  `type:'pin'` 字段;V/G 徽章取标记 `chip:'pull'` 的 checkbox——勾选时若
-  `pullWhenChecked:'high'`(默认)显示 V(上拉到 VCC),否则 G;未勾选相反。
-- **展开详情**:设备控件主体(`el`,即构造函数第一个参数)+ 全量配置编辑器
-  (一条属性一行)。行内放不下的高级功能一律放详情。
-- **拖动排序** ⠿:按下拖柄才启用拖拽,松手回写 devices 顺序(不重建 worker)。
+- **Interactive icon** (`View.rowIcon(el)`): a clickable mini widget whose
+  semantics the plugin defines — LED opens a colour picker on click (writes
+  back via `host.updateConfig({color})`), buttons send press/release while
+  held, the toggle switch flips on click. `render(state)` refreshes the icon
+  state (lit / pressed / ON) as well. Without rowIcon a placeholder letter
+  chip is shown.
+  **Call order**: the panel always calls `rowIcon` before `setConfig`, so
+  config-driven styling covers the icon; the icon and the details body are two
+  visuals of the same state — plugins must share one setter/render
+  (see led.js `setColour()`), never a separate styling path for the icon.
+- **Name / GPIO box / V·G badge**: rendered generically by the panel, edited
+  in place on click (name and GPIO via inline editors, the V/G badge flips
+  directly). The GPIO box maps to the schema's first `type:'pin'` field; the
+  V/G badge maps to the checkbox marked `chip:'pull'` — when checked it shows
+  V (pull-up to VCC) for `pullWhenChecked:'high'` (the default), otherwise G;
+  unchecked is the opposite.
+- **Expanded details**: the device widget body (`el`, the constructor's first
+  argument) + the full config editor (one property per line). Advanced
+  features that do not fit in the row live here.
+- **Drag sorting** ⠿: dragging is armed only while the grip is held; on
+  release the devices order is written back (no worker rebuild).
 
-## ctx(worker 侧设备上下文)
+## ctx (worker-side device context)
 
-| 成员 | 说明 |
+| member | description |
 |---|---|
-| `ctx.id` / `ctx.chip` / `ctx.gpioCount` | 设备 id、芯片型号、GPIO 数 |
-| `ctx.setPinInput(pin, high)` | 驱动引脚输入电平(固件可读到、可触发 GPIO 中断) |
-| `ctx.subscribe(pins)` / `ctx.unsubscribe()` | 订阅引脚输出变化(onPinState) |
-| `ctx.readMem(addr, len)` / `ctx.readU32(addr)` | 总线/MMIO 读取(LEDC duty、RMT RAM 等) |
-| `ctx.cycles()` | 模拟器周期计数 |
-| `ctx.markDirty()` | 请求尽快把 getState() 推给页面 |
-| `ctx.log(text, level?)` | 在 UART 控制台打一条 `[Peris]` 日志 |
+| `ctx.id` / `ctx.chip` / `ctx.gpioCount` | device id, chip model, GPIO count |
+| `ctx.setPinInput(pin, high)` | drive a pin's input level (firmware reads it; raises GPIO interrupts) |
+| `ctx.subscribe(pins)` / `ctx.unsubscribe()` | subscribe to pin-output changes (onPinState) |
+| `ctx.readMem(addr, len)` / `ctx.readU32(addr)` | bus/MMIO reads (LEDC duty, RMT RAM, …) |
+| `ctx.cycles()` | emulator cycle counter |
+| `ctx.markDirty()` | request getState() to be pushed to the page soon |
+| `ctx.log(text, level?)` | print a `[Peris]` line on the UART console |
 
-## 消息协议(页面 ↔ worker)
+## Message protocol (page ↔ worker)
 
-在原版 worker 协议之外增加(见 `peris/protocol.js`):
+Added on top of the stock worker protocol (see `peris/protocol.js`):
 
-- 页面→worker:`peris_config {config}`(全量应用配置)、`peris_command {id, cmd, params}`
-- worker→页面:`peris_ready {ok, errors, devices}`、`peris_state {id, state}`、`peris_log {level, text}`
+- page→worker: `peris_config {config}` (apply a config in full),
+  `peris_command {id, cmd, params}`
+- worker→page: `peris_ready {ok, errors, devices}`, `peris_state {id, state}`,
+  `peris_log {level, text}`
 
-## 配置文件
+## Config files
 
 ```json
 {
@@ -98,30 +116,46 @@ export class View {             // 运行在页面,渲染设备视图
 }
 ```
 
-- 自动保存于 localStorage(`peris.config.v1`,含 `chip`,页面加载时自动选中
-  对应芯片),面板头部的保存/打开图标导出/导入 `.json`。
-- **导出文件名**:面板头部输入框设置(即项目名;留空 = 自动名
-  `peris-{chip}-{date}.json`),记忆于 localStorage;命名逻辑见
-  `peris-panel.ts exportFileName()`。
-- **`firmware` 为备忘字段**:导出时记录最近加载固件的文件名/大小(/磁盘路径,
-  仅当宿主环境暴露非标准 `File.path` 时存在——浏览器安全模型不提供全路径)。
-  导入时忽略,不会自动加载固件;`chip` 在 localStorage 自动保存/恢复时会
-  选中对应芯片,Import 导入的 JSON 中则为备忘(不改当前选择)。
-- v1 规则:每个 GPIO 同时只能被一个设备占用(任意方向);冲突会在面板顶部黄条提示。
+- Autosaved to localStorage (`peris.config.v1`, including `chip`, which is
+  auto-selected when the page loads); the save/open icons in the panel head
+  export/import `.json`.
+- **Export file name**: set in the panel-head input (it doubles as the project
+  name; empty = auto name `peris-{chip}-{date}.json`), remembered in
+  localStorage; naming logic in `peris-panel.ts exportFileName()`.
+- **`firmware` is an informational field**: records the name/size(/disk path)
+  of the most recently loaded firmware at export time (the path exists only
+  when the host exposes the non-standard `File.path` — the browser security
+  model provides no full path). Import ignores it and never auto-loads
+  firmware; `chip` selects the matching chip when the localStorage config is
+  saved/restored, but in an imported JSON it is informational only (it does
+  not change the current selection).
+- v1 rule: each GPIO can be claimed by at most one device (either direction);
+  conflicts surface in the yellow bar at the top of the pane.
 
-## 设备开发注意事项(源自 M0 实测,见 FEASIBILITY.md)
+## Device development notes (from M0 measurements; see FEASIBILITY.md)
 
-1. **引脚输出**:固件主动 GPIO 输出在 `onPinState` 可见(out+oe);**LEDC/RMT 走 GPIO matrix 的信号不出现在引脚寄存器**,必须读 MMIO(LEDC duty 寄存器、RMT 通道 RAM),地址表在 `peris/mmio/`。
-2. **引脚输入**:`ctx.setPinInput` 会真实进入固件(读值+中断),按键类设备在 `onEmuReady` 里要重新驱动电平(模拟器重载后电平复位)。
-3. **时间**:`vTaskDelay` 期间模拟器时间快进,不要试图在 CPU 睡眠窗口做引脚级波形捕获;CPU 活跃的位绑定波形可在 run_batch 批间采样,但请节制(细批约 99 MIPS,粗批 5000+ MIPS)。
-4. 状态推送节流 ~30fps;`getState()` 返回的对象会 postMessage,保持小而可序列化。
-5. View 中触发**设备动作**统一走 `sendCmd(cmd, params)`;**修改配置**(如行内换色)
-   走 `host.updateConfig(patch)`——配置的唯一事实源在页面 PerisPanel,worker 侧
-   不得缓存/改配置。不要在页面侧直接操作模拟器。
+1. **Pin outputs**: firmware GPIO writes are visible in `onPinState`
+   (out+oe); **signals routed through the GPIO matrix (LEDC/RMT) never appear
+   in the pin registers** — you must read MMIO (LEDC duty registers, RMT
+   channel RAM); address tables are in `peris/mmio/`.
+2. **Pin inputs**: `ctx.setPinInput` genuinely reaches the firmware (reads +
+   interrupts); button-type devices must re-drive their level in
+   `onEmuReady` (levels reset when the emulator reloads).
+3. **Time**: emulator time fast-forwards during `vTaskDelay`; do not attempt
+   pin-level waveform capture inside CPU sleep windows. Bit-banged waveforms
+   while the CPU is active can be sampled between run_batch calls, but keep
+   it modest (~99 MIPS with fine batches, 5000+ MIPS with coarse ones).
+4. State pushes are throttled to ~30fps; the object returned by `getState()`
+   is postMessaged — keep it small and serialisable.
+5. **Device actions** from the View always go through `sendCmd(cmd, params)`;
+   **config changes** (e.g. picking a colour from the row icon) go through
+   `host.updateConfig(patch)` — the single source of truth for config is the
+   page's PerisPanel; the worker side must never cache/mutate it. Never touch
+   the emulator from the page side.
 
-## 示例
+## Examples
 
-- `peris/devices/led.js` — 输出型设备(sigbus 订阅)
-- `peris/devices/button.js` — 输入型设备(setPinInput + onEmuReady)
-- `peris/devices/touch-button.js` — 继承 button 的 Device,换 View
-- `peris/devices/toggle-switch.js` — 保持型输入设备
+- `peris/devices/led.js` — output device (sigbus subscription)
+- `peris/devices/button.js` — input device (setPinInput + onEmuReady)
+- `peris/devices/touch-button.js` — inherits button's Device, different View
+- `peris/devices/toggle-switch.js` — latching input device

@@ -1,6 +1,6 @@
 {
     "name": "esp-emu-peris",
-    "version": "0.5.0",
+    "version": "0.5.1",
     "private": true,
     "type": "module",
     "description": "Simulated peripherals for the esp-emulator browser (wasm) build",

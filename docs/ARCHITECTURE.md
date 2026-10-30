@@ -1,104 +1,134 @@
-# esp-emu-peris 系统架构
+**English** | [简体中文](ARCHITECTURE.zh-cn.md)
 
-## 1. 分层总览
+# esp-emu-peris system architecture
+
+## 1. Layered overview
 
 ```
-┌───────────────────────────────── 页面(page)─────────────────────────────────┐
-│ esp-emu-peris.html   上游样式原块(便于升级 diff)+ <link peris/peris.css>    │
-│ 三栏同屏:UART0 控制台 │ 外设面板 │ Debug(0.3.0 起不再标签切换)              │
-│ build/ui/*  (TypeScript 编译产物)                                           │
-│   app.ts          编排器:机器状态、Run/Pause/固件/网络控件、消息路由          │
-│   worker-client   Worker 唯一入口(其它模块一律经由它收发消息)               │
-│   terminal / chart / debug-panels     UART 控制台 / 性能图 / Debug 只读面板  │
-│   peris-panel + config-editor         行式外设列表(图标/名称/GPIO/V·G 徽章  │
-│                                        + 展开/删除/拖动)与详情配置编辑器     │
+┌───────────────────────────────── page ──────────────────────────────────────┐
+│ esp-emu-peris.html   stock style block kept verbatim (easy upgrade diff)    │
+│                      + <link peris/peris.css>                               │
+│ three panes at once: UART0 console | peripherals | debug (no tabs since 0.3)│
+│ build/ui/*  (TypeScript compiler output)                                    │
+│   app.ts          orchestrator: machine state, Run/Pause/firmware/network   │
+│                   controls, message routing                                 │
+│   worker-client   the only Worker entry (all other modules go through it)   │
+│   terminal / chart / debug-panels     UART console / perf chart / read-only │
+│                                       debug panels                          │
+│   peris-panel + config-editor         row-based peripherals list            │
+│                                       (icon/name/GPIO/V·G badge            │
+│                                       + expand/remove/drag-sort) and the   │
+│                                       details config editor                │
 └───────────────▲───────────────────────────────────────────────▲────────────┘
-        postMessage(协议见 core/protocol.ts)                     │ DOM
+        postMessage (protocol in core/protocol.ts)                │ DOM
 ┌───────────────┴───────────────────────────────────────────────▼────────────┐
-│ 页面侧设备 View(peris/devices/*.js 的 View 类,由 peris-panel 实例化)      │
+│ page-side device Views (View classes of peris/devices/*.js, instantiated    │
+│ by peris-panel)                                                             │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                            ← peris_state / peris_command →                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ build/core/worker.ts  上游 worker 复刻 + 6 处 peris: 钩子(唯一可碰上游逻辑) │
-│ build/core/runtime.ts 设备宿主:配置校验/实例化/命令/状态节流推送             │
-│ build/core/sigbus.ts  引脚信号总线:每批 gpio_state() 差分分发               │
-│ build/core/registry.ts 插件注册表(manifest 驱动 + 元数据校验)              │
-│ build/core/{version,types,protocol,chips,mmio}.ts  版本/契约/消息/芯片表/寄存器表 │
-│ worker 侧设备 Device(peris/devices/*.js 的 Device 类)                      │
-└───────────────────────────┬─────────────────────────────────────────────────┘
-                            │ WasmEmulator(闭源 wasm,只此一处触碰)
-                    esp_emu_bg.wasm v0.51.0
+│ build/core/worker.ts  upstream worker replica + 6 peris: hooks (the only    │
+│                       file allowed to touch upstream logic)                 │
+│ build/core/runtime.ts device host: config validation/instantiation/commands │
+│                       /throttled state pushes                               │
+│ build/core/sigbus.ts  pin signal bus: per-batch gpio_state() diff dispatch  │
+│ build/core/registry.ts plugin registry (manifest-driven + meta validation)  │
+│ build/core/{version,types,protocol,chips,mmio}.ts  version/contracts/       │
+│                       messages/chip tables/register tables                  │
+│ worker-side devices (Device classes of peris/devices/*.js)                  │
+└───────────────────────────────────────────────────┬─────────────────────────┘
+                                                    │ WasmEmulator (closed-source
+                                                    │ wasm, touched only here)
+                                            esp_emu_bg.wasm v0.51.0
 ```
 
-## 2. 关键决策与理由
+## 2. Key decisions and why
 
-| 决策 | 理由 |
+| decision | rationale |
 |---|---|
-| 模拟器只存在于 worker | 页面永不触碰 wasm;所有交互走 postMessage,线程模型不可能被破坏 |
-| 框架层 TypeScript、设备插件原生 JS | 类型检查覆盖 bug 高发区(本次重构即修掉状态丢弃缺陷);插件保持"丢文件即用",不引入构建依赖 |
-| tsc 逐文件编译、不打包 | 产物仍是标准 ESM 目录,部署模型不变(www 只增不改);上游同构,升级 diff 容易 |
-| 样式拆 peris.css,上游样式原块留 HTML | 升级时直接 diff HTML 里的上游段 |
-| 数据在 TS 常量(chips/mmio)而非 JSON | tsc 原生携带、类型检查、无运行时拷贝问题 |
-| registry 运行时校验插件元数据 | 插件作者没有编译期检查,缺 `pins()`/`typeId` 在加载时即报错(真实 bug 类) |
+| emulator lives only in the worker | the page never touches the wasm; all interaction goes through postMessage, so the threading model cannot be broken |
+| framework in TypeScript, device plugins in plain JS | type-checking covers the bug-prone areas (the big refactor fixed a dropped-state defect this way); plugins stay drop-in with no build dependency |
+| tsc per-file compilation, no bundling | output stays a standard ESM directory, deployment model unchanged (www add-only); same shape as upstream for easy upgrade diffs |
+| peris styles split into peris.css, stock styles stay inline in the HTML | upstream sections of the HTML can be diffed directly on upgrade |
+| data lives in TS constants (chips/mmio), not JSON | carried natively by tsc, type-checked, no runtime copy issues |
+| registry validates plugin metadata at load time | plugin authors get no compile-time checks; a missing `pins()`/`typeId` fails immediately at load (a real bug class) |
 
-## 3. 数据流与状态归属
+## 3. Data flow and state ownership
 
-- **固件 → 设备**:worker 每批 `run_batch()` 后 `runtime.onBatchEnd()` → `sigbus.sample()`
-  读 `gpio_state()`(4 个 32 位字),按**联合变化掩码**(out|oe)对每个变化引脚分发一次
-  `onPinState`。无变化时成本 = 1 次 wasm 调用 + 4 次 XOR。
-- **设备 → 页面**:设备 `markDirty()` → `flushStates` 节流 ~30fps;**节流窗口内挂尾随
-  定时器,保证最后一次 dirty 必达**(否则静止在窗口内的最终状态会被丢弃)。
-- **页面 → 设备**:View `sendCmd()` → `peris_command` → `runtime.command()` → `onCommand`。
-- **输入引脚电平**:唯一写者是 `ctx.setPinInput`(设备)与 Debug 网格的 `gpio_input`。
-  页面侧 `gpioInputLevels[]` 只是 Debug 网格自己的镜像,不是权威状态;权威状态在设备里
-  (`onEmuReady` 时重驱动)。
-- **配置**:页面 `PerisPanel.config` 是唯一事实源;每次变更全量 `peris_config` 下发
-  (worker 销毁重建实例)并写 localStorage。引脚冲突由 worker 校验后回报
-  `peris_ready.errors`,页面黄条展示。
+- **Firmware → device**: after each `run_batch()` the worker calls
+  `runtime.onBatchEnd()` → `sigbus.sample()` reads `gpio_state()` (four 32-bit
+  words) and, using the **union change mask** (out|oe), dispatches one
+  `onPinState` per changed pin. With no changes the cost is 1 wasm call + 4
+  XORs.
+- **Device → page**: `markDirty()` → `flushStates` throttled to ~30 fps; **a
+  trailing timer is attached inside the throttle window so the last dirty flag
+  is always delivered** (otherwise a final state resting inside the window
+  would be dropped).
+- **Page → device**: View `sendCmd()` → `peris_command` → `runtime.command()` →
+  `onCommand`.
+- **Input pin levels**: the only writers are `ctx.setPinInput` (devices) and
+  the Debug grid's `gpio_input`. The page-side `gpioInputLevels[]` is only the
+  Debug grid's own mirror, not authoritative state; the authority lives in the
+  devices (re-driven on `onEmuReady`).
+- **Config**: the page's `PerisPanel.config` is the single source of truth;
+  every change is sent in full via `peris_config` (the worker destroys and
+  rebuilds instances) and written to localStorage. Pin conflicts are validated
+  by the worker and reported back through `peris_ready.errors`, shown as a
+  yellow bar on the page.
 
-## 4. 目录职责
+## 4. Directory responsibilities
 
 ```
-src/core/        worker 侧框架(TS 源)        → 编译到 build/core/
-src/ui/          页面侧模块(TS 源)            → 编译到 build/ui/
-build/           tsc 产物(未入 git;HTML/worker/测试都引用这里)
-peris/devices/   设备插件(JS 源,不编译;manifest.json 注册;各自版本号)
-peris/vendor/    xterm 本地化
-peris/peris.css  peris 专属样式
-tests/unit/      单元测试(node:test,零依赖)
-tests/m1_smoke.mjs  集成冒烟(真实 wasm+固件+runtime+设备)
-tests/m0_probe.mjs  模拟器能力探针(升级上游时先跑它)
-tests/firmware/  IDF 测试固件
+src/core/        worker-side framework (TS sources)   → compiled to build/core/
+src/ui/          page-side modules (TS sources)       → compiled to build/ui/
+build/           tsc output (not in git; HTML/worker/tests reference it)
+peris/devices/   device plugins (JS sources, not compiled; manifest.json
+                 registers them; each carries its own version)
+peris/vendor/    vendored xterm
+peris/peris.css  peris-specific styles
+tests/unit/      unit tests (node:test, zero dependencies)
+tests/m1_smoke.mjs  integration smoke (real wasm + firmware + runtime + devices)
+tests/m0_probe.mjs  emulator capability probe (run first on upstream upgrades)
+tests/firmware/  IDF test firmware
 ```
 
-## 5. 构建与测试
+## 5. Build & tests
 
 ```bash
-npm install                 # 一次性(typescript 走 npmmirror 源)
-npm run build               # tsc → peris/core + peris/ui(改 src 后必须)
-npm run check               # 仅类型检查
-npm test                    # 单测 + 集成冒烟
-npm run serve               # python serve.py(合并服务仓库与 www/pkg)
-npm run sync                # 发布进官方 www(先 build)
+npm install                 # one-time (typescript from the npmmirror registry)
+npm run build               # tsc → peris/core + peris/ui (mandatory after src changes)
+npm run check               # type-check only
+npm test                    # unit + integration smoke
+npm run serve               # python serve.py (merges the service repo and www/pkg)
+npm run sync                # publish into the official www (build first)
 ```
 
-测试分层:**单元**(纯逻辑:位运算/电平语义/校验/行式徽章推导——快、定位准)→
-**集成**(真实 wasm+固件全链路)→ **GUI**(手动清单:页面加载、三栏同屏可见、加设备
-后行式渲染、行内改名/改 GPIO/翻 V·G、行内图标交互(点灯换色/按压/开关)、展开详情
-与配置编辑、拖动排序、载固件、Run 后 LED 翻转、配置导入导出往返;浏览器自动化待
-网络环境允许时引入 Playwright,
-`PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright`)。
+Test layering: **unit** (pure logic: bit math / level semantics / validation /
+row-badge derivation — fast, pinpoints failures) → **integration** (real wasm
++ firmware, full chain) → **GUI** (manual checklist: page load, three panes
+visible at once, row rendering after adding a device, inline rename / GPIO
+change / V·G flip, row-icon interactions (LED colour / press / switch), expand
+details & config editing, drag sorting, firmware load, LED toggling while
+running, config import/export round-trip; browser automation to be introduced
+with Playwright once the network allows —
+`PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright`).
 
-## 6. 升级流程(摘要,详见 UPGRADE.md)
+## 6. Upgrade procedure (summary; details in UPGRADE.md)
 
-1. 新 wasm 包就位后先跑 `npm run test:m0`,对比 FEASIBILITY.md 结论;
-2. diff 上游 worker.js ↔ `src/core/worker.ts`(改动均标 `peris:`);
-3. diff 上游 app.js/index.html ↔ `src/ui/*.ts` 与 HTML 的上游样式段;
-4. `npm run build && npm test`,GUI 冒测。
+1. After a new wasm package lands, run `npm run test:m0` first and compare
+   against FEASIBILITY.md;
+2. diff the upstream worker.js ↔ `src/core/worker.ts` (all changes carry
+   `peris:` markers);
+3. diff upstream app.js/index.html ↔ `src/ui/*.ts` and the stock style section
+   of the HTML;
+4. `npm run build && npm test`, manual GUI pass.
 
-## 7. 扩展点
+## 7. Extension points
 
-- **新外设**:`peris/devices/` 放模块 + manifest 一行(见 docs/DEVICE-API.md);Worker/页面
-  自动加载,元数据即时校验。
-- **新芯片**:`src/core/mmio/<chip>.ts` 加地址表 + 注册到 `mmio.ts`;`chips.ts` 补引脚数。
-- **新页面面板**:ui/ 加模块,在 app.ts 的消息路由注册——worker 协议不动。
+- **New peripheral**: drop a module into `peris/devices/` + one manifest line
+  (see docs/DEVICE-API.md); worker and page load it automatically with
+  immediate metadata validation.
+- **New chip**: add the address table in `src/core/mmio/<chip>.ts` and register
+  it in `mmio.ts`; add the pin count in `chips.ts`.
+- **New page panel**: add a module in ui/ and register it in app.ts's message
+  routing — the worker protocol stays untouched.

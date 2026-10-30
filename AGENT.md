@@ -1,105 +1,150 @@
-# AGENT.md — 后续 Agent 必读(坑与约定)
+**English** | [简体中文](AGENT.zh-cn.md)
 
-本文件沉淀开发至今的全部环境坑、架构约定与验证方法。**动手前先读完本文。**
+# AGENT.md — required reading for follow-up agents (gotchas & conventions)
 
-## 0. 快速上手
+This file captures every environment pitfall, architecture rule and
+verification method learned so far. **Read it fully before touching anything.**
+(Chinese version: AGENT.zh-cn.md — keep both in sync, see §7.)
+
+## 0. Quick start
 
 ```bash
-npm install                # typescript 走 npmmirror(见 §1)
-npm run build              # tsc:src/ → build/(改 src 后必须;build/ 不入 git)
-npm test                   # 单元测试 + 集成冒烟
+npm install                # typescript via npmmirror (see §1)
+npm run build              # tsc: src/ → build/ (mandatory after src changes; build/ not in git)
+npm test                   # unit tests + integration smoke
 npm run serve              # http://127.0.0.1:8080/esp-emu-peris.html
-npm run sync               # 发布进 _tools/esp-emu-browser/www(先 build;--clean 清残留)
+npm run sync               # publish into _tools/esp-emu-browser/www (build first; --clean removes stale output)
 ```
 
-架构与数据流见 `docs/ARCHITECTURE.md`;外设开发见 `docs/DEVICE-API.md`;
-esp-emulator wasm 能力边界见 `docs/EMU-API.md` 与 `docs/FEASIBILITY.md`(M0 实测)。
+Architecture & data flow: `docs/ARCHITECTURE.md`; peripheral development:
+`docs/DEVICE-API.md`; esp-emulator wasm capability limits: `docs/EMU-API.md`
+and `docs/FEASIBILITY.md` (M0 measurements).
 
-## 1. 环境坑(本机)
+## 1. Environment pitfalls (this machine)
 
-- **CDN 不可达**:jsdelivr 直连被重置。npm 用镜像:
-  `npm --registry=https://registry.npmmirror.com install ...`;静态资源从
-  `https://registry.npmmirror.com/<pkg>/-/<name>-<ver>.tgz` 下 tarball 解包
-  (xterm 就是这样 vendor 进 `peris/vendor/` 的;包内是**非压缩**版,无 .min)。
-- **Playwright 浏览器二进制**未装(网络);要装:
-  `PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright`。
-- **ESP-IDF**:master 检出在 `C:\esp\master\esp-idf`,环境启用用
-  `C:\Users\A\Desktop\quick\idfm.bat`(PowerShell profile)。脚本化调用**必须清掉
-  `MSYSTEM` 环境变量**(Git Bash 继承它,idf.py 会拒绝),参考 `tests/firmware/build.ps1`。
-- 固件加载进浏览器**必须 `idf.py merge-bin`** 的 merged image;裸 app bin 无声不启动
-  (症状:UART 永远无输出)。产物:`tests/firmware/peris_probe/build/merged-binary.bin`。
-- `node --test <目录>` 在 Windows/Git Bash 下解析异常,**显式传 .test.mjs 文件列表**。
+- **CDN unreachable**: direct jsdelivr connections are reset. Use a mirror for
+  npm: `npm --registry=https://registry.npmmirror.com install ...`; fetch
+  static assets as tarballs from
+  `https://registry.npmmirror.com/<pkg>/-/<name>-<ver>.tgz` and unpack
+  (that is how xterm was vendored into `peris/vendor/`; the package ships the
+  **unminified** build, no .min).
+- **Playwright browser binaries** not installed (network); to install:
+  `PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright`.
+- **ESP-IDF**: master checkout at `C:\esp\master\esp-idf`; enable the
+  environment with `C:\Users\A\Desktop\quick\idfm.bat` (PowerShell profile).
+  Scripted invocation **must clear the `MSYSTEM` env var** (Git Bash inherits
+  it and idf.py refuses); see `tests/firmware/build.ps1`.
+- Firmware must be loaded into the browser as the **`idf.py merge-bin` merged
+  image**; a bare app bin silently never starts (symptom: UART stays quiet
+  forever). Artifact: `tests/firmware/peris_probe/build/merged-binary.bin`.
+- `node --test <directory>` resolves incorrectly on Windows/Git Bash —
+  **pass the .test.mjs file list explicitly** (package.json does).
 
-## 2. esp-emulator wasm 行为(实测,勿凭直觉)
+## 2. esp-emulator wasm behaviour (measured — do not guess)
 
-- **没有回调**,一切靠 `run_batch()` 批间轮询;UART 输出是 `run_batch` 的返回字符串。
-- **LEDC/RMT 波形不出现在 `gpio_state()`**(它们走 GPIO matrix);只有 CPU 直写 GPIO 可见。
-  PWM→读 LEDC `DUTY_R`(值=duty×16),WS2812→读 RMT 通道 RAM(发送后留存)。
-  地址表:`src/core/mmio/`,来源与验证:FEASIBILITY.md。
-- **`vTaskDelay` 期间时间快进**:睡眠窗口内引脚级波形不可捕获,与采样率无关。
-  CPU 活跃的位绑定波形可采样,但**同一批次间隙内连续翻转输入会丢边沿**
-  (press→release 必须隔批次,见 m1_smoke S3)。
-- `gpio_set_input` 默认电平高(上拉);能触发固件 GPIO 中断(可靠)。
-- 新 `WasmEmulator` 实例后输入电平复位 → 设备必须在 `onEmuReady()` 重驱动。
+- **No callbacks**: everything is `run_batch()` polling between batches; UART
+  output is the return string of `run_batch`.
+- **LEDC/RMT waveforms never appear in `gpio_state()`** (they go through the
+  GPIO matrix); only CPU-direct GPIO writes are visible.
+  PWM → read the LEDC `DUTY_R` (value = duty×16), WS2812 → read the RMT
+  channel RAM (left over after transmission).
+  Address tables: `src/core/mmio/`; sources & verification: FEASIBILITY.md.
+- **Time fast-forwards during `vTaskDelay`**: pin-level waveforms inside a
+  sleep window cannot be captured, regardless of sample rate.
+  Waveforms of CPU-active bit-banged signals can be sampled, but **consecutive
+  input flips within one batch gap lose edges** (press→release must straddle
+  batches; see m1_smoke S3).
+- `gpio_set_input` defaults to a high level (pull-up); it reliably raises the
+  firmware's GPIO interrupts.
+- After a fresh `WasmEmulator` instance the input levels reset → devices must
+  re-drive in `onEmuReady()`.
 
-## 3. 架构铁律(docs/ARCHITECTURE.md 有完整图)
+## 3. Architecture iron rules (full picture in docs/ARCHITECTURE.md)
 
-1. **模拟器只在 worker**:页面永不 import wasm;一切经 `src/ui/worker-client.ts`。
-2. **worker 里唯一允许复刻上游逻辑的文件是 `src/core/worker.ts`**,改动必须带
-   `peris:` 标记,便于上游升级 diff(docs/UPGRADE.md 流程)。
-3. **设备插件是原生 JS**(丢文件即用,不参与构建);框架是 TS。别给 devices/ 加
-   import 依赖到 src/ 运行时模块(可用 `build/core/*.d.ts` 类型做 JSDoc 提示)。
-4. 插件元数据必须含 `static pins(cfg)`(冲突检测)、`typeId`、`title`、
-   `defaultConfig`,可选 `version`;registry 加载时校验,**缺了当场报错**。
-5. 配置以页面 `PerisPanel.config` 为唯一事实源,变更全量下发+localStorage;
-   不要在 worker 侧缓存/修改配置。
-6. 状态推送有 33ms 节流 + **尾随定时器**(保证最后一次 dirty 必达)——别删掉尾随逻辑,
-   那是修过的真实缺陷(状态静默丢失)。
-7. sigbus 按批做 gpio_state 差分,**联合掩码**(out|oe)每引脚每批至多通知一次。
-8. **同语义代码必须复用,禁止复制一份再改**:同一逻辑只允许一份实现,所有
-   入口(行内 chip / 详情编辑器 / 行图标 / 新插件)调用同一函数——
-   GPIO 可选项= `config-editor.ts fillPinOptions()`;V·G 徽章推导=`rowChips()`;
-   插件多视觉元素(如 LED 灯泡+行图标)共用同一 setter/render,不许给图标
-   单写一份样式逻辑;面板对 View 固定 **先 `rowIcon` 后 `setConfig`**,
-   保证配置式样能覆盖到图标。改行为前先找有没有既有函数,有就复用;
-  review 发现两处雷同代码时,先抽公共函数再改。
+1. **The emulator lives only in the worker**: the page never imports the wasm;
+   everything goes through `src/ui/worker-client.ts`.
+2. **The only file allowed to replicate upstream logic is `src/core/worker.ts`**
+   — every change there must carry a `peris:` marker for upstream-upgrade
+   diffs (procedure in docs/UPGRADE.md).
+3. **Device plugins are plain JS** (drop a file and it works, no build); the
+   framework is TypeScript. Do not add imports from devices/ into src/ runtime
+   modules (compiled `build/core/*.d.ts` types may be used for JSDoc hints).
+4. Plugin metadata must include `static pins(cfg)` (conflict detection),
+   `typeId`, `title`, `defaultConfig`, optional `version`; the registry
+   validates at load time and **errors out immediately when missing**.
+5. The page's `PerisPanel.config` is the single source of truth for
+   configuration: every change is sent in full + localStorage; never cache or
+   mutate config on the worker side.
+6. State pushes have a 33ms throttle + a **trailing timer** (guarantees the
+   last dirty flag is always delivered) — do not remove the trailing flush;
+   it fixed a real defect (silently dropped state).
+7. sigbus diffs `gpio_state` per batch with the **union mask** (out|oe),
+   notifying each pin at most once per batch.
+8. **Same-semantic code must be reused — never copy and modify**: one logic,
+   one implementation, and every entry point (row chip / details editor / row
+   icon / new plugin) calls the same function — GPIO options =
+   `fillPinOptions()` in `config-editor.ts`; V·G badge derivation =
+   `rowChips()`; a plugin's multiple visuals (LED bulb + row icon) share one
+   setter/render — never write a second styling path for the icon; the panel
+   calls View hooks in a fixed order, **`rowIcon` before `setConfig`**, so
+   config-driven styling covers the icon too. Before changing behaviour, look
+   for an existing function and reuse it; when review finds duplicated code,
+   extract the shared function first, then change it.
 
-## 4. 曾踩过的 bug(防止回潮)
+## 4. Past bugs (prevent regressions)
 
-| bug | 教训 |
+| bug | lesson |
 |---|---|
-| registry 把 manifest 模块路径解析到 `peris/` 根 | manifest 路径相对 devices/ 目录,编译位置变化要同步改 `DEVICES_DIR` |
-| 设备构造函数里 `ctx.subscribe()` 时实例未注册 | sigbus 存**取值函数**惰性解析,不要存实例 |
-| 错误条 `style.display=''` 回退 CSS `none` 永不可见 | 显式 `display='block'`,且无错时清空 textContent(避免读到陈旧报错) |
-| `peris_config` 早于 registry init 到达 → 全部 unknown type | `applyConfig` 先 await init |
-| 设备漏写 `static pins()` → 冲突检测静默失效 | registry 强制校验 + 单测覆盖 |
-| 按键 activeLow 电平写反 | idle=高、pressed=低(active-low 上拉接法);单测固定语义 |
-| Worker URL 相对**页面**解析,不是相对 import 的模块 | worker-client 里写页面相对路径 `build/core/worker.js` |
-| 节流窗口丢最后一次状态 | 尾随 flush(见 §3.7) |
-| LED 行图标颜色与详情灯泡不一致(0.3.0) | 面板曾先 setConfig 后 rowIcon,且插件两处各自设色;统一 setColour + 固定调用顺序(§3.8) |
-| 换芯片加载固件后,详情编辑器 GPIO 选项仍是旧芯片(0.3.0) | 编辑器把 validPins 快照在构建时;芯片变化必须重建编辑器;选项构建统一走 fillPinOptions(§3.8) |
+| registry resolved manifest module paths to the `peris/` root | manifest paths are relative to the devices/ dir; update `DEVICES_DIR` when compile locations move |
+| `ctx.subscribe()` in a device constructor ran before the instance was registered | sigbus stores a **getter function** for lazy resolution — never the instance |
+| error bar `style.display=''` fell back to CSS `none`, never visible | set `display='block'` explicitly, and clear textContent when there is no error (stale messages) |
+| `peris_config` arrived before registry init → everything "unknown type" | `applyConfig` awaits init first |
+| a device forgot `static pins()` → conflict detection silently off | registry enforces + unit-tested |
+| button activeLow levels inverted | idle = high, pressed = low (active-low pull-up wiring); semantics pinned by unit tests |
+| worker URL resolved relative to the **page**, not the importing module | worker-client hard-codes the page-relative path `build/core/worker.js` |
+| throttle window dropped the last state | trailing flush (see §3.6) |
+| LED row-icon colour disagreed with the details bulb (0.3.0) | the panel called setConfig before rowIcon and the plugin styled the two in separate places; unified `setColour` + fixed call order (§3.8) |
+| after loading firmware for another chip, the details editor kept the old chip's GPIO options (0.3.0) | the editor snapshot `validPins` at build time; chip changes must rebuild editors, and option building goes through `fillPinOptions` (§3.8) |
 
-## 5. 测试与验证约定
+## 5. Testing & verification conventions
 
-- **单元测试**(node:test,零依赖):纯逻辑——sigbus 位运算、电平语义、配置校验、
-  MMIO 地址表。改 core/devices 必跑;新增设备请仿照 `tests/unit/devices.test.mjs`
-  补电平/状态语义用例。
-- **集成冒烟** `tests/m1_smoke.mjs`:真实 wasm+固件+runtime+设备。**时序经验**:
-  - boot 约占 500+ 批(50k 指令/批),别盲选批次号,**按 UART 标记驱动**
-    (固件用 `###P1 start/end` 等标记,见 `tests/firmware/peris_probe/main/main.c`);
-  - 固件在每轮 P1 start 把按键计数**清零**,计数可能只出现在 `###P1 end btn=N` 行,
-    断言正则别只匹配 `i=` 行;
-  - flushStates 有节流,读状态断言前 `await` ~60ms。
-- **M0 探针** `tests/m0_probe.mjs`:上游 wasm 升级后**第一个跑**的东西,六项
-  结论(Q1a..Q3b)若有变化先改 FEASIBILITY.md/EMU-API.md 再动其它代码。
-- **GUI 冒测**(手动,清单在 ARCHITECTURE.md §5):本会话所用 IAB 自动化易劣化
-  (点击 actionability 超时、截图 surface 失败、xterm DOM 只渲染视口行且 rAF
-  停滞时整块冻结)——**DOM 只读断言最可靠**;固件注入可用页面自身 drop 处理器
-  (同源 fetch → File → DataTransfer → drop 事件)作为环境准备。
+- **Unit tests** (node:test, zero deps): pure logic — sigbus bit math, level
+  semantics, config validation, MMIO address tables. Mandatory after changing
+  core/devices; for a new device, follow `tests/unit/devices.test.mjs` and add
+  level/state semantics cases.
+- **Integration smoke** `tests/m1_smoke.mjs`: real wasm + firmware + runtime +
+  devices. **Timing lessons**:
+  - boot takes ~500+ batches (50k instr/batch) — do not hard-code batch
+    numbers, **drive by UART markers** (the firmware prints `###P1 start/end`
+    etc., see `tests/firmware/peris_probe/main/main.c`);
+  - the firmware resets the button counter at each P1 start, so the count may
+    only appear on the `###P1 end btn=N` line — do not match only `i=` lines;
+  - flushStates is throttled; `await` ~60ms before asserting on state.
+- **M0 probe** `tests/m0_probe.mjs`: after an upstream wasm upgrade this is
+  **the first thing to run**; if any of the six conclusions (Q1a..Q3b)
+  changed, update FEASIBILITY.md/EMU-API.md before touching other code.
+- **GUI smoke** (manual; checklist in ARCHITECTURE.md §5): the IAB automation
+  used in past sessions degrades easily (click actionability timeouts,
+  screenshot surface failures, xterm DOM rendering only viewport rows and
+  freezing whole blocks when rAF stalls) — **read-only DOM assertions are the
+  most reliable**; firmware injection can use the page's own drop handler
+  (same-origin fetch → File → DataTransfer → drop event) as environment setup.
 
-## 6. 版本与发布
+## 6. Versioning & releases
 
-- 项目版本:`src/core/version.ts` + `package.json` + `docs/CHANGELOG.md` 三处同步。
-- 设备版本:各插件 `static version`,卡片头展示;CHANGELOG 有设备版本表。
-- 发进 www 用 `npm run sync`(--clean 清旧产物);www 原版文件(index.html/app.js/
-  worker.js/pkg/serve.py)**永远不动**。
+- Project version: synced in three places — `src/core/version.ts` +
+  `package.json` + `docs/CHANGELOG.md`.
+- Device versions: each plugin's `static version`, shown in the row header;
+  CHANGELOG keeps a device version table.
+- Publish into www with `npm run sync` (--clean removes stale output); the
+  stock www files (index.html/app.js/worker.js/pkg/serve.py) are **never
+  touched**.
+
+## 7. Documentation conventions (bilingual)
+
+- Every document ships in two languages: **English under the default
+  filename**, **Chinese as `*.zh-cn.md`** (README/AGENT/docs/*); the two
+  versions cross-link in their first line, and in-document links stay within
+  the same language.
+- Any documentation change must be applied to **both languages** in the same
+  commit — no translating later.

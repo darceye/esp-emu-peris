@@ -1,74 +1,86 @@
+**English** | [简体中文](README.zh-cn.md)
+
 # esp-emu-peris
 
-为乐鑫 [esp-emulator](https://github.com/espressif/esp-emulator) 浏览器形态(wasm)做的**模拟外设面板**:LED、按键、触摸按键、拨动开关……以插件方式不断添加,不需要改动官方 `www/` 里的任何基础文件。
+**Simulated peripherals** for the browser (wasm) build of Espressif's
+[esp-emulator](https://github.com/espressif/esp-emulator): LEDs, push buttons,
+touch buttons, toggle switches… — added as plugins, without touching any stock
+file in the official `www/`.
 
 ```
-esp-emu-peris.html      入口页面(UART0 控制台 | 外设行式面板 | Debug,三栏同屏)
-src/                    TypeScript 源码(npm run build → build/)
-  core/                 worker 侧框架:version/types/protocol/chips/mmio/sigbus/registry/runtime/worker
-  ui/                   页面侧模块:app/worker-client/terminal/chart/debug-panels/peris-panel/config-editor
-build/                  编译产物(tsc,未入 git;core/ + ui/)
+esp-emu-peris.html      entry page (UART0 console | peripherals rows | Debug — three panes at once)
+src/                    TypeScript sources (npm run build → build/)
+  core/                 worker-side framework: version/types/protocol/chips/mmio/sigbus/registry/runtime/worker
+  ui/                   page-side modules: app/worker-client/terminal/chart/debug-panels/peris-panel/config-editor
+build/                  compiler output (tsc, not in git; core/ + ui/)
 peris/
-  devices/              外设插件(原生 JS,丢文件即用,含各自版本号):led/button/touch-button/toggle-switch
-  vendor/ peris.css     xterm 本地化 + 面板样式
-examples/               接线配置示例(JSON,可直接 Import)
-tests/unit/             单元测试(node:test)
-tests/m1_smoke.mjs      集成冒烟(真实 wasm+固件全链路)
-tests/m0_probe.mjs      模拟器能力探针(上游升级时先跑)
-tests/firmware/         ESP-IDF 测试固件
+  devices/              peripheral plugins (plain JS, drop-in, each with its own version): led/button/touch-button/toggle-switch
+  vendor/ peris.css     vendored xterm + panel styles
+examples/               wiring-config examples (JSON, directly importable)
+tests/unit/             unit tests (node:test)
+tests/m1_smoke.mjs      integration smoke test (real wasm + firmware, full chain)
+tests/m0_probe.mjs      emulator capability probe (run first on upstream upgrades)
+tests/firmware/         ESP-IDF test firmware
 docs/                   ARCHITECTURE / EMU-API / FEASIBILITY / DEVICE-API / CHANGELOG / UPGRADE / ROADMAP
-AGENT.md                环境/架构/坑(贡献前必读)
+AGENT.md                environment/architecture/gotchas (read before contributing)
 ```
 
-架构、数据流、状态归属与扩展点见 **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**;
-版本规则见 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**(项目版本三处同步,设备有独立版本)。
+Architecture, data flow, state ownership and extension points:
+**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**; versioning rules:
+**[docs/CHANGELOG.md](docs/CHANGELOG.md)** (project version synced in three
+places; devices carry their own versions).
 
-## 快速开始
+## Quick start
 
 ```bash
-# 一次性:npm 依赖(自动用 npmmirror 源装 typescript)
+# one-time: npm deps (typescript installs from the npmmirror registry)
 npm install
 
-# 开发循环:改 src/ → 构建 → 测试 → 起 merged 开发服务器
+# dev loop: edit src/ → build → test → merged dev server
 npm run build
 npm test
 npm run serve               # http://127.0.0.1:8080/esp-emu-peris.html
 
-# 浏览器打开上面的地址,选择芯片、拖入 merged flash image(.bin)
-# 注意:必须是 idf.py merge-bin 生成的完整镜像,裸 app bin 无法启动
+# open the URL above in a browser, pick a chip, drop a merged flash image (.bin)
+# NOTE: it must be a full image produced by idf.py merge-bin — a bare app bin
+# will not boot
 
-# 外设栏(控制台右侧):Add 添加 LED/按键等;每外设一行——行内图标可交互
-# (LED 点击换色/按键按压),名称、GPIO 方框、V/G 电平徽章点击即改,
-# ▸ 展开详情与高级配置,⠿ 拖动排序;面板头部:项目名输入框 + 保存/打开图标
-# (导出/导入接线配置 JSON,自动存 localStorage 并记忆芯片,下次打开自动
-# 选中)
+# peripherals pane (right of the console): the + icon adds LEDs/buttons/etc.
+# Each device is one row — the row icon is interactive (LED click changes
+# colour / button press), name, GPIO box and V/G pull badge edit on click,
+# ▸ expands details & advanced config, ⠿ drags to reorder. Panel head:
+# project-name input + save/open icons (export/import the wiring config JSON,
+# autosaved to localStorage and remembering the chip, auto-selected next time)
 ```
 
-把外设面板**发布**进官方 www 目录(只增不改;先 build):
+**Publish** the peripherals panel into the official www directory (add-only,
+never modifies; build first):
 
 ```bash
-npm run sync                 # 复制入口 html + peris/(含编译产物)+ examples/
+npm run sync                 # copies the entry html + peris/ (incl. build output) + examples/
 ```
 
-## 能力与限制(实测结论,详见 docs/FEASIBILITY.md)
+## Capabilities & limits (measured; details in docs/FEASIBILITY.md)
 
-| 外设 | 状态 | 途径 |
+| Peripheral | Status | Approach |
 |---|---|---|
-| 各色 LED | ✅ M1 | 轮询 GPIO 输出寄存器 |
-| 物理按键 / 触摸按键(GPIO 语义)/ 拨动开关 | ✅ M1 | 驱动引脚输入,固件可读到并触发中断 |
-| PWM 调光 LED / RGB | 🔜 M2 | 读 LEDC duty 寄存器(引脚级 PWM 不可见) |
-| WS2812 幻彩灯 | 🔜 M3 | 读 RMT 通道 RAM 解码(引脚级波形不可见) |
-| 位绑定 I2C/SPI 设备、IR | 🔜 M4 | 高速引脚采样(需固件位绑定) |
-| 硬件 I2C/SPI 设备、显示屏、ADC、真触摸、I2S、SD | ⏸ M5 | 等 esp-emulator 上游暴露 API |
+| LEDs, any colour | ✅ M1 | polls the GPIO output registers |
+| Push button / touch button (GPIO semantics) / toggle switch | ✅ M1 | drives pin input; firmware reads it and gets interrupts |
+| PWM dimmed LED / RGB | 🔜 M2 | reads LEDC duty registers (pin-level PWM is invisible) |
+| WS2812 addressable LEDs | 🔜 M3 | decodes from RMT channel RAM (pin-level waveform invisible) |
+| Bit-banged I2C/SPI devices, IR | 🔜 M4 | high-rate pin sampling (requires bit-banged firmware) |
+| Hardware I2C/SPI devices, displays, ADC, real touch, I2S, SD | ⏸ M5 | waiting for esp-emulator upstream APIs |
 
-注:触摸**外设**未被模拟——触摸按键以 GPIO 输入呈现,固件按 GPIO 读取即可
-(`tests/firmware/peris_probe` 有示例:GPIO3 输入 + 下降沿 ISR)。
+Note: the touch **peripheral** itself is not emulated — the touch button
+appears as a GPIO input that firmware reads as plain GPIO
+(`tests/firmware/peris_probe` has an example: GPIO3 input + falling-edge ISR).
 
-## 添加一个新外设
+## Adding a new peripheral
 
-1. 在 `peris/devices/` 放一个模块,导出 `Device` 与 `View`(接口见
-   `peris/device-api.js` 顶部注释或 docs/DEVICE-API.md);
-2. 在 `peris/devices/manifest.json` 加一行。完成——页面和 worker 会自动加载。
+1. Drop a module into `peris/devices/` exporting `Device` and `View`
+   (interface: docs/DEVICE-API.md);
+2. Add one line to `peris/devices/manifest.json`. Done — page and worker pick
+   it up automatically.
 
 ```js
 // peris/devices/my-dev.js
@@ -88,22 +100,23 @@ export class View {
 }
 ```
 
-## 测试固件与测试
+## Test firmware & tests
 
 ```powershell
-# 构建固件(用 C:\Users\A\Desktop\quick\idfm.bat 的 IDF 环境)
+# build the firmware (IDF env from C:\Users\A\Desktop\quick\idfm.bat)
 powershell -ExecutionPolicy Bypass -NoProfile -File tests\firmware\build.ps1
-# 生成 merged image(加载用):
+# merged image for loading:
 #    tests/firmware/peris_probe/build/merged-binary.bin
 ```
 
 ```bash
-npm test                     # 单元测试 + 集成冒烟(见 docs/ARCHITECTURE.md 测试分层)
-npm run test:m0              # 模拟器能力探针(上游 wasm 升级时先跑)
+npm test                     # unit + integration smoke (test layering in docs/ARCHITECTURE.md)
+npm run test:m0              # emulator capability probe (run first on upstream upgrades)
 ```
 
-固件三阶段循环:GPIO8 闪烁 / GPIO9 LEDC 呼吸 / GPIO4 RMT-WS2812 发帧,
-并配合 GPIO3 输入中断计数,用于端到端验证。
+The firmware runs a three-phase loop: GPIO8 blink / GPIO9 LEDC breathing /
+GPIO4 RMT-WS2812 frames, plus GPIO3 input-interrupt counting, for end-to-end
+verification.
 
-注:页面自身不依赖任何 CDN——xterm/xterm-addon-fit 已本地化到
-`peris/vendor/`(取自 npm 包的非压缩构建),离线可用。
+Note: the page itself has no CDN dependency — xterm/xterm-addon-fit are
+vendored into `peris/vendor/` (unminified npm builds), so it works offline.
