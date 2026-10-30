@@ -418,11 +418,18 @@
         <aside class="peris-panel" id="pane-peris" aria-label="Peripherals">
             <div class="panel-head">Peripherals</div>
             <div class="peris-toolbar">
-                <select id="peris-add" title="Add a peripheral"></select>
-                <button id="peris-add-btn" class="btn small primary">Add</button>
-                <button id="peris-export-btn" class="btn small" title="Download the wiring config as JSON">Export</button>
-                <button id="peris-import-btn" class="btn small" title="Load a wiring config from a JSON file">Import</button>
-                <input type="file" id="peris-import-file" accept=".json" hidden>
+                <div class="peris-tool-row">
+                    <select id="peris-add" title="Add a peripheral"></select>
+                    <button id="peris-add-btn" class="btn small primary">Add</button>
+                </div>
+                <div class="peris-tool-row">
+                    <input type="text" id="peris-filename" spellcheck="false"
+                        placeholder="peris-{chip}-{date}"
+                        title="Export file name (.json appended if missing; empty = auto name). Saved for next time.">
+                    <button id="peris-export-btn" class="btn small" title="Download the wiring config as JSON">Export</button>
+                    <button id="peris-import-btn" class="btn small" title="Load a wiring config from a JSON file">Import</button>
+                    <input type="file" id="peris-import-file" accept=".json" hidden>
+                </div>
             </div>
             <div id="peris-errors"></div>
             <div class="peris-scroll">

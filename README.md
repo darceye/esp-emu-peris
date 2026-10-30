@@ -39,8 +39,8 @@ npm run serve               # http://127.0.0.1:8080/esp-emu-peris.html
 
 # 外设栏(控制台右侧):Add 添加 LED/按键等;每外设一行——行内图标可交互
 # (LED 点击换色/按键按压),名称、GPIO 方框、V/G 电平徽章点击即改,
-# ▸ 展开详情与高级配置,⠿ 拖动排序;Export/Import 导出/导入接线配置
-# (JSON,自动存 localStorage)
+# ▸ 展开详情与高级配置,⠿ 拖动排序;Export 导出接线配置(JSON,文件名可
+# 自定义、附带芯片与固件信息;自动存 localStorage),Import 导入
 ```
 
 把外设面板**发布**进官方 www 目录(只增不改;先 build):

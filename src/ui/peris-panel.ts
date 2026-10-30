@@ -17,11 +17,38 @@ import { buildConfigEditor, fillPinOptions, rowChips } from './config-editor.js'
 import type { TerminalView } from './terminal.js';
 
 const STORAGE_KEY = 'peris.config.v1';
+const EXPORT_NAME_KEY = 'peris.exportName.v1';
+
+/**
+ * Firmware provenance recorded in exported configs (informational only —
+ * import ignores it). Browsers do not expose a file's full disk path;
+ * `path` is filled only when the host environment provides a non-standard
+ * `File.path`/`filePath` property.
+ */
+export interface FirmwareInfo {
+    name: string;
+    size: number;
+    path?: string;
+}
 
 export interface PerisPanelDeps {
     send(msg: unknown): void;
     getChip(): string;
+    /** Last loaded firmware's name/size(/path), or null before any load. */
+    firmwareInfo(): FirmwareInfo | null;
     terminal: TerminalView;
+}
+
+/**
+ * Compose the export file name from the user-set base: illegal filename
+ * characters are stripped, a single .json suffix is enforced. Empty base
+ * falls back to the auto name peris-{chip}-{yyyy-mm-dd}.json.
+ * (Pure — unit-tested.)
+ */
+export function exportFileName(custom: string, chip: string, date = new Date()): string {
+    const base = custom.trim().replace(/[\\/:*?"<>|]/g, '').replace(/\.json$/i, '');
+    if (base) return `${base}.json`;
+    return `peris-${chip}-${date.toISOString().slice(0, 10)}.json`;
 }
 
 interface RowEntry { row: HTMLElement; view: ViewLike | null; }
@@ -509,11 +536,16 @@ export class PerisPanel {
     // ---- import / export ----
 
     private exportCfg() {
-        const data = JSON.stringify({ ...this.config, chip: this.deps.getChip() }, null, 2);
+        const payload: Record<string, unknown> = { ...this.config, chip: this.deps.getChip() };
+        const fw = this.deps.firmwareInfo();
+        if (fw) payload.firmware = fw; // informational; import ignores it
+        const data = JSON.stringify(payload, null, 2);
         const blob = new Blob([data], { type: 'application/json' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `peris-${this.deps.getChip()}-${new Date().toISOString().slice(0, 10)}.json`;
+        a.download = exportFileName(
+            (document.getElementById('peris-filename') as HTMLInputElement).value,
+            this.deps.getChip());
         a.click();
         setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     }
@@ -548,6 +580,13 @@ export class PerisPanel {
     // ---- toolbar wiring ----
 
     private wireToolbar() {
+        // user-set export file name: restored from / saved to localStorage
+        const nameInput = document.getElementById('peris-filename') as HTMLInputElement;
+        try { nameInput.value = localStorage.getItem(EXPORT_NAME_KEY) || ''; } catch { /* storage unavailable */ }
+        nameInput.addEventListener('change', () => {
+            try { localStorage.setItem(EXPORT_NAME_KEY, nameInput.value); } catch { /* ignore */ }
+        });
+
         document.getElementById('peris-add-btn')!.addEventListener('click', () => {
             const t = (document.getElementById('peris-add') as HTMLSelectElement).value;
             if (t) this.addDevice(t);

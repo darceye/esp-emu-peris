@@ -2,8 +2,8 @@
  * Unit tests for the built-in device plugins (worker side, no emulator):
  * electrical semantics — button idle/pressed levels (an inverted activeLow
  * was a real M1 bug), LED onPinState mapping, toggle switch driving —
- * plus the row-UI contract (rowIcon, V/G pull chips).
- * Run: node --test tests/unit/
+ * plus the row-UI contract (rowIcon, V/G pull chips) and export naming.
+ * Run: node --test <files> (see package.json — explicit list for Git Bash)
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,6 +13,7 @@ import * as toggle from '../../peris/devices/toggle-switch.js';
 import * as touch from '../../peris/devices/touch-button.js';
 import { validateDeviceModule } from '../../build/core/types.js';
 import { rowChips } from '../../build/ui/config-editor.js';
+import { exportFileName } from '../../build/ui/peris-panel.js';
 
 /** Recording stub for the runtime ctx handed to device constructors. */
 function makeCtx() {
@@ -82,6 +83,19 @@ test('rowChips: GPIO number + V/G pull char from schema chip flags', () => {
     // schema without a pin field → no pin chip
     const noPin = { ...led.Device, configSchema: [{ key: 'name', label: 'Label', type: 'text' }] };
     assert.equal(rowChips(noPin, { name: 'x' }).pinKey, null);
+});
+
+test('exportFileName: custom base wins, sanitised, single .json suffix', () => {
+    const d = new Date('2026-10-30T00:00:00Z');
+    assert.equal(exportFileName('my-wiring', 'esp32c3', d), 'my-wiring.json');
+    assert.equal(exportFileName('my-wiring.json', 'esp32c3', d), 'my-wiring.json', 'no double suffix');
+    assert.equal(exportFileName('my wiring.JSON', 'esp32c3', d), 'my wiring.json');
+    // Windows-illegal characters stripped
+    assert.equal(exportFileName('a/b\\c:d*e?f"g<h>i|.json', 'esp32c3', d), 'abcdefghi.json');
+    // empty / whitespace-only / stripped-to-empty → auto name
+    assert.equal(exportFileName('', 'esp32c3', d), 'peris-esp32c3-2026-10-30.json');
+    assert.equal(exportFileName('   ', 'esp32c3', d), 'peris-esp32c3-2026-10-30.json');
+    assert.equal(exportFileName('???.json', 'esp32s3', d), 'peris-esp32s3-2026-10-30.json');
 });
 
 test('button active-low: idle HIGH, pressed LOW (pull-up wiring)', () => {

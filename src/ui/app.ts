@@ -10,6 +10,7 @@ import { TerminalView, formatBytes, formatCycles } from './terminal.js';
 import { PerfPanel } from './chart.js';
 import { DebugPanels } from './debug-panels.js';
 import { PerisPanel } from './peris-panel.js';
+import type { FirmwareInfo } from './peris-panel.js';
 import { gpioCount, absentPins } from '../core/chips.js';
 import { PERIS_VERSION } from '../core/version.js';
 import type { PerisEvent } from '../core/protocol.js';
@@ -38,6 +39,7 @@ class App {
 
     private isRunning = false;
     private firmwareLoaded = false;
+    private fwInfo: FirmwareInfo | null = null;
     private romData: ArrayBuffer | null = null;
     private romFilename: string | null = null;
     private netConnected = false;
@@ -75,6 +77,7 @@ class App {
         this.peris = new PerisPanel({
             send: (m) => this.client.send(m),
             getChip: () => this.machine.chip,
+            firmwareInfo: () => this.fwInfo,
             terminal: this.term,
         });
 
@@ -176,6 +179,7 @@ class App {
                     } else {
                         this.term.writeln('\x1b[33m[System] Emulator reset (no firmware)\x1b[0m');
                         this.firmwareLoaded = false;
+                        this.fwInfo = null;
                         this.setStatus('idle', 'Reset');
                     }
                     this.updateButtons();
@@ -238,6 +242,14 @@ class App {
         this.term.writeln(`\x1b[36m[System] Loading ${file.name} (${buffer.byteLength} bytes) for ${chip}...\x1b[0m`);
         $('fw-name').textContent = `${file.name} · ${formatBytes(buffer.byteLength)}`;
         $('fw-drop-text').innerHTML = '<strong>Replace</strong> with another .bin';
+        // Provenance for config exports. Web browsers do not expose a file's
+        // disk path; the non-standard props are read in case the host has one.
+        const withPath = file as File & { path?: string; filePath?: string };
+        this.fwInfo = {
+            name: file.name,
+            size: buffer.byteLength,
+            path: withPath.path ?? withPath.filePath,
+        };
 
         if (this.isRunning) {
             this.isRunning = false;
