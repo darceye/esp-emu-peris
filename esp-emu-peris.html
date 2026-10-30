@@ -416,20 +416,28 @@
         </section>
 
         <aside class="peris-panel" id="pane-peris" aria-label="Peripherals">
-            <div class="panel-head">Peripherals</div>
+            <div class="panel-head peris-head">
+                <span class="ph-title">Peripherals</span>
+                <input type="text" id="peris-filename" spellcheck="false"
+                    placeholder="peris-{chip}-{date}"
+                    title="Project / export file name (.json appended if missing; empty = auto name). Saved for next time.">
+                <button id="peris-export-btn" class="icon-btn" type="button" title="Save the wiring config as JSON (named above)" aria-label="Export config">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+                        <path d="M2 2h9l3 3v9H2z"/><path d="M5 2v4.5h5.5V2"/><rect x="5" y="9" width="6" height="5" rx="0.5"/>
+                    </svg>
+                </button>
+                <button id="peris-import-btn" class="icon-btn" type="button" title="Open a wiring config (.json)" aria-label="Import config">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+                        <path d="M1.5 3h4l1.5 2h7.5v8.5h-13z"/>
+                    </svg>
+                </button>
+                <input type="file" id="peris-import-file" accept=".json" hidden>
+            </div>
             <div class="peris-toolbar">
-                <div class="peris-tool-row">
-                    <select id="peris-add" title="Add a peripheral"></select>
-                    <button id="peris-add-btn" class="btn small primary">Add</button>
-                </div>
-                <div class="peris-tool-row">
-                    <input type="text" id="peris-filename" spellcheck="false"
-                        placeholder="peris-{chip}-{date}"
-                        title="Export file name (.json appended if missing; empty = auto name). Saved for next time.">
-                    <button id="peris-export-btn" class="btn small" title="Download the wiring config as JSON">Export</button>
-                    <button id="peris-import-btn" class="btn small" title="Load a wiring config from a JSON file">Import</button>
-                    <input type="file" id="peris-import-file" accept=".json" hidden>
-                </div>
+                <select id="peris-add" title="Add a peripheral"></select>
+                <button id="peris-add-btn" class="btn small primary" type="button" title="Add the selected peripheral" aria-label="Add peripheral">
+                    <svg viewBox="0 0 10 10" width="10" height="10" fill="none"><path d="M5 1v8M1 5h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                </button>
             </div>
             <div id="peris-errors"></div>
             <div class="peris-scroll">

@@ -36,6 +36,8 @@ export interface PerisPanelDeps {
     getChip(): string;
     /** Last loaded firmware's name/size(/path), or null before any load. */
     firmwareInfo(): FirmwareInfo | null;
+    /** Select the target chip (restoring a cached wiring's chip). */
+    selectChip(chip: string): void;
     terminal: TerminalView;
 }
 
@@ -125,7 +127,9 @@ export class PerisPanel {
 
     private persist() {
         try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config));
+            // chip rides along so the next session can re-select it (restore)
+            localStorage.setItem(STORAGE_KEY,
+                JSON.stringify({ ...this.config, chip: this.deps.getChip() }));
         } catch { /* storage unavailable */ }
     }
 
@@ -134,6 +138,7 @@ export class PerisPanel {
             const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') as PerisConfig | null;
             if (saved && Array.isArray(saved.devices)) {
                 this.config = { perisVersion: PERIS_API_VERSION, devices: saved.devices };
+                if (typeof saved.chip === 'string' && saved.chip) this.deps.selectChip(saved.chip);
             }
         } catch { /* ignore */ }
     }

@@ -21,6 +21,29 @@
     flex-shrink: 0;
     user-select: none;
 }
+/* peripherals head doubles as the project-name row + save/open actions */
+.peris-head {
+    display: flex; align-items: center; gap: 7px;
+    padding: 7px 10px;
+}
+.peris-head .ph-title { white-space: nowrap; }
+.peris-head input[type="text"] {
+    flex: 1; min-width: 0;
+    text-transform: none; letter-spacing: 0; font-weight: 400;
+    background: var(--bg); border: 1px solid var(--border-strong);
+    border-radius: 4px; padding: 3px 8px;
+    font-size: 11.5px; font-family: var(--mono); color: var(--text); outline: none;
+}
+.peris-head input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.icon-btn {
+    width: 25px; height: 25px; flex-shrink: 0; padding: 0;
+    display: grid; place-items: center;
+    background: var(--surface-2); border: 1px solid var(--border-strong);
+    border-radius: var(--radius); color: var(--muted); cursor: pointer;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.icon-btn:hover { background: var(--surface-3); color: var(--text); }
+.icon-btn svg { width: 13px; height: 13px; }
 .main-area > .peris-panel {
     width: 360px;
     background: var(--surface);
@@ -49,24 +72,15 @@
 /* ---- peripherals panel ---- */
 #pane-peris.over { outline: 2px dashed var(--accent); outline-offset: -6px; }
 .peris-toolbar {
-    display: flex; flex-direction: column; gap: 6px;
-    padding: 10px 12px;
+    display: flex; gap: 6px; padding: 8px 12px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
 }
-.peris-tool-row { display: flex; gap: 6px; }
-.peris-tool-row select {
+.peris-toolbar select {
     flex: 1; min-width: 0;
     background: var(--bg); border: 1px solid var(--border-strong);
     border-radius: var(--radius); padding: 4px 8px; font-size: 12px;
 }
-.peris-tool-row input[type="text"] {
-    flex: 1; min-width: 0;
-    background: var(--bg); border: 1px solid var(--border-strong);
-    border-radius: var(--radius); padding: 4px 8px;
-    font-size: 11.5px; font-family: var(--mono); outline: none;
-}
-.peris-tool-row input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 #peris-errors {
     display: none;
     color: var(--warn); font-size: 11.5px;

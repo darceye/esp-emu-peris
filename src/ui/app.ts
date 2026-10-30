@@ -66,6 +66,15 @@ class App {
             getChip: () => this.machine.chip,
             firmwareLoaded: () => this.firmwareLoaded,
         });
+        // Cached wiring first: restore() may re-select the chip, and the
+        // defaults built right below (GPIO grid, register table) must use it.
+        this.peris = new PerisPanel({
+            send: (m) => this.client.send(m),
+            getChip: () => this.machine.chip,
+            firmwareInfo: () => this.fwInfo,
+            selectChip: (chip) => this.selectChip(chip),
+            terminal: this.term,
+        });
         this.initGpioDefaults();
 
         this.client = new WorkerClient();
@@ -73,13 +82,6 @@ class App {
             this.term.writeln(`\x1b[31m[Error] Worker failed: ${message}\x1b[0m`);
             this.term.writeln('\x1b[31m[Error] Check browser console (F12) for details\x1b[0m');
         };
-
-        this.peris = new PerisPanel({
-            send: (m) => this.client.send(m),
-            getChip: () => this.machine.chip,
-            firmwareInfo: () => this.fwInfo,
-            terminal: this.term,
-        });
 
         this.routeWorkerMessages();
         this.setupControls();
@@ -97,6 +99,15 @@ class App {
         this.debug.initGpioPanel(chip, { count: gpioCount(chip), absent: absentPins(chip) });
         this.debug.initRegTable(false, chip);
         this.debug.renderCores([], chip);
+    }
+
+    /** Sync the Target chip select + machine info (cached wiring restore). */
+    private selectChip(chip: string) {
+        const sel = $('chip-select') as HTMLSelectElement;
+        if (!Array.from(sel.options).some((o) => o.value === chip)) return; // unknown chip
+        sel.value = chip;
+        this.applyMachineInfo({ ...this.machine, chip });
+        this.updateRomBtnLabel();
     }
 
     private applyMachineInfo(msg: Partial<MachineInfo> & { chip?: string }) {

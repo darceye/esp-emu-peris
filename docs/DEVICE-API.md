@@ -98,12 +98,15 @@ export class View {             // 运行在页面,渲染设备视图
 }
 ```
 
-- 自动保存于 localStorage(`peris.config.v1`),面板 Export/Import 按钮可导出/导入 `.json`。
-- **导出文件名**:工具栏输入框设置(留空 = 自动名 `peris-{chip}-{date}.json`),
-  记忆于 localStorage;命名逻辑见 `peris-panel.ts exportFileName()`。
+- 自动保存于 localStorage(`peris.config.v1`,含 `chip`,页面加载时自动选中
+  对应芯片),面板头部的保存/打开图标导出/导入 `.json`。
+- **导出文件名**:面板头部输入框设置(即项目名;留空 = 自动名
+  `peris-{chip}-{date}.json`),记忆于 localStorage;命名逻辑见
+  `peris-panel.ts exportFileName()`。
 - **`firmware` 为备忘字段**:导出时记录最近加载固件的文件名/大小(/磁盘路径,
   仅当宿主环境暴露非标准 `File.path` 时存在——浏览器安全模型不提供全路径)。
-  导入时忽略,不会自动加载固件;`chip` 同为备忘,导入不改当前芯片。
+  导入时忽略,不会自动加载固件;`chip` 在 localStorage 自动保存/恢复时会
+  选中对应芯片,Import 导入的 JSON 中则为备忘(不改当前选择)。
 - v1 规则:每个 GPIO 同时只能被一个设备占用(任意方向);冲突会在面板顶部黄条提示。
 
 ## 设备开发注意事项(源自 M0 实测,见 FEASIBILITY.md)
