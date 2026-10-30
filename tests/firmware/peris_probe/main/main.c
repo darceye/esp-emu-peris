@@ -11,6 +11,9 @@
  *   P2  LEDC breathing on GPIO 9 (5 kHz / 13-bit duty ramp) — lets the
  *       probe check whether PWM is observable at the pad register and
  *       whether the LEDC duty registers track the requested duty.
+ *       Channels 1 (GPIO 6, mirrored counter-ramp) and 2 (GPIO 7, constant
+ *       half duty) run alongside since M2 so multi-channel devices (RGB
+ *       LED) are exercised too; the ###P2 markers still describe ch0 only.
  *   P2b one-shot extremes (duty 0 / 50% / max for 300 ms each) so duty
  *       estimates have flat, unambiguous windows to be measured against.
  *   P3  RMT WS2812 bursts on GPIO 4 (8 LEDs, colour walk, frame logged
@@ -31,7 +34,9 @@
 
 #define PIN_GPIO   8                       /* P1: plain blink            */
 #define PIN_BTN    3                       /* P1: driven input + ISR     */
-#define PIN_LEDC   9                       /* P2: LEDC PWM               */
+#define PIN_LEDC   9                       /* P2: LEDC PWM ch0           */
+#define PIN_LEDC1  6                       /* P2: LEDC PWM ch1           */
+#define PIN_LEDC2  7                       /* P2: LEDC PWM ch2           */
 #define PIN_RMT    4                       /* P3: RMT WS2812             */
 #define LED_COUNT  8
 #define RMT_RES_HZ (10 * 1000 * 1000)      /* 0.1 us per RMT tick        */
@@ -121,6 +126,13 @@ void app_main(void)
         .hpoint = 0,
     };
     ESP_ERROR_CHECK(ledc_channel_config(&c));
+    /* ch1/ch2 ride the same timer; their duties are driven inside P2 */
+    c.channel = LEDC_CHANNEL_1;
+    c.gpio_num = PIN_LEDC1;
+    ESP_ERROR_CHECK(ledc_channel_config(&c));
+    c.channel = LEDC_CHANNEL_2;
+    c.gpio_num = PIN_LEDC2;
+    ESP_ERROR_CHECK(ledc_channel_config(&c));
 
     rmt_tx_channel_config_t rc = {
         .clk_src = RMT_CLK_SRC_DEFAULT,
@@ -153,6 +165,10 @@ void app_main(void)
 
         /* --- P2: duty ramp, then flat extremes for clean measurement --- */
         printf("###P2 start\n");
+        /* ch1 mirrors the ramp downwards, ch2 holds half duty; the markers
+         * below keep describing ch0 only (m0 probe compatibility) */
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, 4096);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2);
         for (int step = 0; step <= 32; step++) {
             uint32_t duty = step <= 16 ? (uint32_t)step * 512 : (uint32_t)(32 - step) * 512;
             if (duty > 8191) {
@@ -160,6 +176,8 @@ void app_main(void)
             }
             ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
             ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+            ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 8191 - duty);
+            ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
             printf("###P2 d=%lu\n", (unsigned long)duty);
             vTaskDelay(pdMS_TO_TICKS(100));
         }
@@ -171,11 +189,17 @@ void app_main(void)
         for (int k = 0; k < 3; k++) {
             ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, flats[k].duty);
             ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+            ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 8191 - flats[k].duty);
+            ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
             printf("###P2 flat=%s d=%lu\n", flats[k].tag, (unsigned long)flats[k].duty);
             vTaskDelay(pdMS_TO_TICKS(300));
         }
         ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 0);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, 0);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2);
         printf("###P2 end\n");
 
         /* --- P3: WS2812 frames; log before sending so a probe that

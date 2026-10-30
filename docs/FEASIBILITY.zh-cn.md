@@ -45,7 +45,9 @@
 2. **GPIO matrix 路由可读**:固件把 GPIO9 配给 LEDC0 后 `FUNC9_OUT_SEL=0x2d`(=45,
    LEDC_LS_CH0_SIG),GPIO4 配给 RMT 后 `FUNC4_OUT_SEL=0x33`(=51,RMT_SIG_0)。
    **外设接线的自动发现**可据此实现:轮询所有引脚的 OUT_SEL + IO_MUX 即可知道每个
-   pad 当前由哪个外设信号驱动。
+   pad 当前由哪个外设信号驱动。(M2 补充实测:C3 LEDC 完整信号区间 ch0–5 =
+   45–50 已实机验证——tests/m1_smoke.mjs S8 的 rgb-led 自动绑定——占空比
+   分数经 conf0.TIMER_SEL → timer DUTY_RES 解码,见 peris/devices/ledc-lib.js。)
 3. **RMT RAM 留存**:发送完成后符号不清除;48 字/通道;>192 符号的帧走 ping-pong
    (TX_THR_EVENT 重填+wrap),快照中可能同时存在相邻帧的片段,帧间以 reset 符号
    (低电平 ≥30µs,即 d0≥300 且 l0=0)分界。

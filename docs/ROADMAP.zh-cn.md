@@ -2,21 +2,25 @@
 
 # 路线图
 
-## M2 · PWM 调光 LED(下一期)
-
-- `pwm-led.js` + `rgb-led.js`:读 LEDC 各通道 `DUTY_R` 寄存器(地址表 `peris/mmio/`),
-  精确占空比,无混叠(路线已在 M0 验证:Q2b PASS)。
-- 通道→引脚映射:读 `GPIO_FUNCn_OUT_SEL_CFG`(M0 实测 LEDC0=0x2d、RMT0=0x33),
-  实现"自动发现接线"辅助;也允许手动指定通道/引脚。
-- 呼吸灯平滑渲染(canvas 亮度插值)。
-
-## M3 · WS2812 幻彩灯
+## M3 · WS2812 幻彩灯(下一期)
 
 - `ws2812.js`:轮询 RMT 通道 RAM(M0 验证 Q3b PASS),符号→位流→GRB 帧;
   ping-pong 分组 + reset 符号重同步 + 前置补零对齐(细节见 FEASIBILITY.zh-cn.md)。
-- 灯条/灯环/矩阵三种 View;GRB/RGB 顺序、亮度限制、Gamma 可配。
+- 灯条/灯环/矩阵三种 View;GRB/RGB 顺序、亮度限制、Gamma 可配;帧平滑
+  复用 M2 PWM 灯泡的做法(`ledc-lib.js` 动画器)。
 - 性能策略:JS 解码先行;若实测不够,把"采样+解码"热路径用 C/C++ 编成独立 wasm
   辅助模块在 worker 内调用(不动模拟器的闭源 wasm,不影响设备 JS 接口)。
+
+## M2 · PWM 调光 LED——已于 peris 0.6.0 交付
+
+- ✅ `pwm-led.js` + `rgb-led.js`:每个 batch 读 LEDC 各通道 `DUTY_R` 寄存器,
+  精确占空比,无混叠(路线已在 M0 验证:Q2b PASS)。
+- ✅ 通道→引脚映射:`GPIO_FUNCn_OUT_SEL_CFG`(LEDC ch0–5 = 45–50)实现
+  自动发现接线并跟随固件重接线;也允许手动指定通道。
+- ✅ 呼吸灯平滑渲染:canvas 亮度插值(每插件一个 rAF 动画器,同时驱动
+  灯泡与行图标)。
+- 共享逻辑在 `peris/devices/ledc-lib.js`;框架挂载点为
+  `Device.onBatch()` + `ctx.mmio`(见 DEVICE-API.zh-cn.md)。
 
 ## M4 · 位绑定协议设备 + IR
 
@@ -43,4 +47,4 @@
 ## 维护项
 
 - `update_esp_emu_browser.bat`(在 `_tools`,当前为空):按 UPGRADE.zh-cn.md 流程脚本化。
-- `peris/mmio/`:补 C5/C6/H2/P4/S3 地址表(从各自 IDF soc 头文件提取,方法同 M0)。
+- `src/core/mmio/`:补 C5/C6/H2/P4/S3 地址表(从各自 IDF soc 头文件提取,方法同 M0)。

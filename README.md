@@ -4,8 +4,8 @@
 
 **Simulated peripherals** for the browser (wasm) build of Espressif's
 [esp-emulator](https://github.com/espressif/esp-emulator): LEDs, push buttons,
-touch buttons, toggle switches… — added as plugins, without touching any stock
-file in the official `www/`.
+touch buttons, toggle switches, PWM/RGB LEDs… — added as plugins, without
+touching any stock file in the official `www/`.
 
 ```
 esp-emu-peris.html      entry page (UART0 console | peripherals rows | Debug — three panes at once)
@@ -14,7 +14,9 @@ src/                    TypeScript sources (npm run build → build/)
   ui/                   page-side modules: app/worker-client/terminal/chart/debug-panels/peris-panel/config-editor
 build/                  compiler output (tsc, not in git; core/ + ui/)
 peris/
-  devices/              peripheral plugins (plain JS, drop-in, each with its own version): led/button/touch-button/toggle-switch
+  devices/              peripheral plugins (plain JS, drop-in, each with its own version):
+                        led/button/touch-button/toggle-switch + pwm-led/rgb-led (register-level,
+                        shared helpers in ledc-lib.js)
   vendor/ peris.css     vendored xterm + panel styles
 examples/               wiring-config examples (JSON, directly importable)
 tests/unit/             unit tests (node:test)
@@ -66,7 +68,7 @@ npm run sync                 # copies the entry html + peris/ (incl. build outpu
 |---|---|---|
 | LEDs, any colour | ✅ M1 | polls the GPIO output registers |
 | Push button / touch button (GPIO semantics) / toggle switch | ✅ M1 | drives pin input; firmware reads it and gets interrupts |
-| PWM dimmed LED / RGB | 🔜 M2 | reads LEDC duty registers (pin-level PWM is invisible) |
+| PWM dimmed LED / RGB LED | ✅ M2 | reads LEDC duty registers; channel→pin wiring auto-discovered from the GPIO matrix (pin-level PWM is invisible); canvas brightness interpolation for breathing effects |
 | WS2812 addressable LEDs | 🔜 M3 | decodes from RMT channel RAM (pin-level waveform invisible) |
 | Bit-banged I2C/SPI devices, IR | 🔜 M4 | high-rate pin sampling (requires bit-banged firmware) |
 | Hardware I2C/SPI devices, displays, ADC, real touch, I2S, SD | ⏸ M5 | waiting for esp-emulator upstream APIs |
@@ -105,7 +107,8 @@ export class View {
 ```powershell
 # build the firmware (IDF env from C:\Users\A\Desktop\quick\idfm.bat)
 powershell -ExecutionPolicy Bypass -NoProfile -File tests\firmware\build.ps1
-# merged image for loading:
+# merged image for loading (-o is relative to the build dir!):
+powershell -ExecutionPolicy Bypass -NoProfile -File tests\firmware\merge.ps1
 #    tests/firmware/peris_probe/build/merged-binary.bin
 ```
 
@@ -114,7 +117,8 @@ npm test                     # unit + integration smoke (test layering in docs/A
 npm run test:m0              # emulator capability probe (run first on upstream upgrades)
 ```
 
-The firmware runs a three-phase loop: GPIO8 blink / GPIO9 LEDC breathing /
+The firmware runs a three-phase loop: GPIO8 blink / LEDC breathing on
+GPIO9+GPIO6+GPIO7 (ch0 ramps, ch1 mirrors down, ch2 holds half duty) /
 GPIO4 RMT-WS2812 frames, plus GPIO3 input-interrupt counting, for end-to-end
 verification.
 

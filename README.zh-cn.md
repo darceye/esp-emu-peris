@@ -2,7 +2,7 @@
 
 # esp-emu-peris
 
-为乐鑫 [esp-emulator](https://github.com/espressif/esp-emulator) 浏览器形态(wasm)做的**模拟外设面板**:LED、按键、触摸按键、拨动开关……以插件方式不断添加,不需要改动官方 `www/` 里的任何基础文件。
+为乐鑫 [esp-emulator](https://github.com/espressif/esp-emulator) 浏览器形态(wasm)做的**模拟外设面板**:LED、按键、触摸按键、拨动开关、PWM/RGB 调光 LED……以插件方式不断添加,不需要改动官方 `www/` 里的任何基础文件。
 
 ```
 esp-emu-peris.html      入口页面(UART0 控制台 | 外设行式面板 | Debug,三栏同屏)
@@ -11,7 +11,8 @@ src/                    TypeScript 源码(npm run build → build/)
   ui/                   页面侧模块:app/worker-client/terminal/chart/debug-panels/peris-panel/config-editor
 build/                  编译产物(tsc,未入 git;core/ + ui/)
 peris/
-  devices/              外设插件(原生 JS,丢文件即用,含各自版本号):led/button/touch-button/toggle-switch
+  devices/              外设插件(原生 JS,丢文件即用,含各自版本号):led/button/touch-button/
+                        toggle-switch + pwm-led/rgb-led(寄存器级,共享辅助在 ledc-lib.js)
   vendor/ peris.css     xterm 本地化 + 面板样式
 examples/               接线配置示例(JSON,可直接 Import)
 tests/unit/             单元测试(node:test)
@@ -58,7 +59,7 @@ npm run sync                 # 复制入口 html + peris/(含编译产物)+ exam
 |---|---|---|
 | 各色 LED | ✅ M1 | 轮询 GPIO 输出寄存器 |
 | 物理按键 / 触摸按键(GPIO 语义)/ 拨动开关 | ✅ M1 | 驱动引脚输入,固件可读到并触发中断 |
-| PWM 调光 LED / RGB | 🔜 M2 | 读 LEDC duty 寄存器(引脚级 PWM 不可见) |
+| PWM 调光 LED / RGB LED | ✅ M2 | 读 LEDC duty 寄存器;通道→引脚接线从 GPIO 矩阵自动发现(引脚级 PWM 不可见);canvas 亮度插值呈现呼吸效果 |
 | WS2812 幻彩灯 | 🔜 M3 | 读 RMT 通道 RAM 解码(引脚级波形不可见) |
 | 位绑定 I2C/SPI 设备、IR | 🔜 M4 | 高速引脚采样(需固件位绑定) |
 | 硬件 I2C/SPI 设备、显示屏、ADC、真触摸、I2S、SD | ⏸ M5 | 等 esp-emulator 上游暴露 API |
@@ -95,7 +96,8 @@ export class View {
 ```powershell
 # 构建固件(用 C:\Users\A\Desktop\quick\idfm.bat 的 IDF 环境)
 powershell -ExecutionPolicy Bypass -NoProfile -File tests\firmware\build.ps1
-# 生成 merged image(加载用):
+# 生成 merged image(加载用;-o 相对 build 目录!)
+powershell -ExecutionPolicy Bypass -NoProfile -File tests\firmware\merge.ps1
 #    tests/firmware/peris_probe/build/merged-binary.bin
 ```
 
@@ -104,8 +106,9 @@ npm test                     # 单元测试 + 集成冒烟(见 docs/ARCHITECTURE
 npm run test:m0              # 模拟器能力探针(上游升级时先跑)
 ```
 
-固件三阶段循环:GPIO8 闪烁 / GPIO9 LEDC 呼吸 / GPIO4 RMT-WS2812 发帧,
-并配合 GPIO3 输入中断计数,用于端到端验证。
+固件三阶段循环:GPIO8 闪烁 / GPIO9+GPIO6+GPIO7 上 LEDC 呼吸(ch0 渐变、
+ch1 反向、ch2 恒半占空比)/ GPIO4 RMT-WS2812 发帧,并配合 GPIO3 输入
+中断计数,用于端到端验证。
 
 注:页面自身不依赖任何 CDN——xterm/xterm-addon-fit 已本地化到
 `peris/vendor/`(取自 npm 包的非压缩构建),离线可用。

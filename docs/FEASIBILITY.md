@@ -56,7 +56,10 @@ Reproduce: `node tests/m0_probe.mjs` (the probe) + `tests/firmware/peris_probe`
    LEDC0, `FUNC9_OUT_SEL=0x2d` (=45, LEDC_LS_CH0_SIG); after mapping GPIO4 to
    RMT, `FUNC4_OUT_SEL=0x33` (=51, RMT_SIG_0). **Auto-discovery of peripheral
    wiring** can be built on this: poll every pin's OUT_SEL + IO_MUX to learn
-   which peripheral signal currently drives each pad.
+   which peripheral signal currently drives each pad. (M2 follow-up: the full
+   C3 LEDC signal range ch0–5 = 45–50 was verified live — rgb-led
+   auto-binding in tests/m1_smoke.mjs S8 — and the duty fraction decodes via
+   conf0.TIMER_SEL → timer DUTY_RES, see peris/devices/ledc-lib.js.)
 3. **RMT RAM retention**: symbols are not cleared after transmission;
    48 words per channel; frames with >192 symbols use ping-pong
    (TX_THR_EVENT refill + wrap), so a snapshot may contain fragments of

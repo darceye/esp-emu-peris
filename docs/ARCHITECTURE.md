@@ -30,12 +30,13 @@
 │ build/core/worker.ts  upstream worker replica + 6 peris: hooks (the only    │
 │                       file allowed to touch upstream logic)                 │
 │ build/core/runtime.ts device host: config validation/instantiation/commands │
-│                       /throttled state pushes                               │
+│                       /onBatch MMIO tick + throttled state pushes           │
 │ build/core/sigbus.ts  pin signal bus: per-batch gpio_state() diff dispatch  │
 │ build/core/registry.ts plugin registry (manifest-driven + meta validation)  │
 │ build/core/{version,types,protocol,chips,mmio}.ts  version/contracts/       │
 │                       messages/chip tables/register tables                  │
-│ worker-side devices (Device classes of peris/devices/*.js)                  │
+│ worker-side devices (Device classes of peris/devices/*.js; shared helpers   │
+│                       such as ledc-lib.js sit outside the manifest)         │
 └───────────────────────────────────────────────────┬─────────────────────────┘
                                                     │ WasmEmulator (closed-source
                                                     │ wasm, touched only here)
@@ -59,7 +60,10 @@
   `runtime.onBatchEnd()` → `sigbus.sample()` reads `gpio_state()` (four 32-bit
   words) and, using the **union change mask** (out|oe), dispatches one
   `onPinState` per changed pin. With no changes the cost is 1 wasm call + 4
-  XORs.
+  XORs. Register-level devices (LEDC/RMT) additionally receive an
+  `onBatch()` tick in the same call and poll MMIO through
+  `ctx.readU32`/`ctx.mmio` — their signals never surface as pin changes
+  (GPIO matrix, M0 Q2a/Q3a).
 - **Device → page**: `markDirty()` → `flushStates` throttled to ~30 fps; **a
   trailing timer is attached inside the throttle window so the last dirty flag
   is always delivered** (otherwise a final state resting inside the window
@@ -83,7 +87,9 @@ src/core/        worker-side framework (TS sources)   → compiled to build/core
 src/ui/          page-side modules (TS sources)       → compiled to build/ui/
 build/           tsc output (not in git; HTML/worker/tests reference it)
 peris/devices/   device plugins (JS sources, not compiled; manifest.json
-                 registers them; each carries its own version)
+                 registers them; each carries its own version; shared
+                 helper modules like ledc-lib.js live here but outside the
+                 manifest)
 peris/vendor/    vendored xterm
 peris/peris.css  peris-specific styles
 tests/unit/      unit tests (node:test, zero dependencies)
@@ -104,13 +110,15 @@ npm run sync                # publish into the official www (build first)
 ```
 
 Test layering: **unit** (pure logic: bit math / level semantics / validation /
-row-badge derivation — fast, pinpoints failures) → **integration** (real wasm
-+ firmware, full chain) → **GUI** (manual checklist: page load, three panes
+row-badge derivation / LEDC register decode against fake MMIO — fast, pinpoints
+failures) → **integration** (real wasm + firmware, full chain; S7/S8 drive by
+the `###P2` markers) → **GUI** (manual checklist: page load, three panes
 visible at once, row rendering after adding a device, inline rename / GPIO
 change / V·G flip, row-icon interactions (LED colour / press / switch), expand
 details & config editing, drag sorting, firmware load, LED toggling while
-running, config import/export round-trip; browser automation to be introduced
-with Playwright once the network allows —
+running, PWM/RGB LED auto-binding to the firmware's LEDC channels with smooth
+breathing during the P2 phase, config import/export round-trip; browser
+automation to be introduced with Playwright once the network allows —
 `PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright`).
 
 ## 6. Upgrade procedure (summary; details in UPGRADE.md)

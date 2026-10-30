@@ -211,6 +211,19 @@
 /* the native colour picker is opened straight from a transparent overlay */
 .led-dot-picker { position: absolute; inset: -4px; opacity: 0; width: calc(100% + 8px); height: calc(100% + 8px); cursor: pointer; border: 0; padding: 0; }
 
+/* PWM / RGB LED dots: the child glow layer is opacity-driven by the
+ * interpolated duty, so the icon shows continuous brightness (the plain
+ * .lit toggle is binary and stays exclusive to the GPIO LED). */
+.led-dot .dot-glow {
+    position: absolute; inset: -2px; border-radius: 50%; opacity: 0;
+    background: radial-gradient(circle at 38% 32%, #ffffff40 0%, var(--led-color) 55%, transparent 120%);
+    box-shadow: 0 0 10px 2px color-mix(in srgb, var(--led-color) 60%, transparent);
+    pointer-events: none;
+}
+
+/* PWM / RGB bulb body (canvas painted by ledc-lib drawBulb) */
+.pwm-bulb { display: block; border-radius: 50%; }
+
 .icon-press {
     width: 22px; height: 22px; padding: 0; border-radius: 50%;
     border: 1px solid var(--border-strong); background: var(--surface-3);

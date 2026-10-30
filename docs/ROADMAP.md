@@ -2,27 +2,31 @@
 
 # Roadmap
 
-## M2 · PWM dimmed LED (next)
-
-- `pwm-led.js` + `rgb-led.js`: read each LEDC channel's `DUTY_R` register
-  (address tables in `peris/mmio/`) for exact duty cycles, no aliasing
-  (approach verified in M0: Q2b PASS).
-- Channel→pin mapping: read `GPIO_FUNCn_OUT_SEL_CFG` (M0 measured LEDC0 =
-  0x2d, RMT0 = 0x33) to implement "auto-discovered wiring" assistance;
-  manual channel/pin selection also allowed.
-- Breathing effect with smooth rendering (canvas brightness interpolation).
-
-## M3 · WS2812 addressable LEDs
+## M3 · WS2812 addressable LEDs (next)
 
 - `ws2812.js`: poll the RMT channel RAM (M0 verified Q3b PASS),
   symbols → bitstream → GRB frames; ping-pong grouping + reset-symbol
   resync + leading-zero alignment (details in FEASIBILITY.md).
 - Strip / ring / matrix Views; GRB/RGB order, brightness cap and gamma
-  configurable.
+  configurable; smooth frame interpolation like the M2 PWM bulbs
+  (reuse the `ledc-lib.js` animator).
 - Performance strategy: JS decoding first; if measurements show it is not
   enough, compile the hot "sample + decode" path into a separate wasm helper
   module (C/C++) invoked from the worker (the emulator's closed-source wasm
   stays untouched, the device JS interface unchanged).
+
+## M2 · PWM dimmed LED — shipped in peris 0.6.0
+
+- ✅ `pwm-led.js` + `rgb-led.js`: each LEDC channel's `DUTY_R` register is
+  read every batch for the exact duty cycle, no aliasing (approach verified
+  in M0: Q2b PASS).
+- ✅ Channel→pin mapping: `GPIO_FUNCn_OUT_SEL_CFG` (LEDC ch0–5 = 45–50)
+  implements auto-discovered wiring that follows firmware rewiring; manual
+  channel selection also allowed.
+- ✅ Breathing effect with smooth rendering: canvas brightness
+  interpolation (one rAF animator per plugin repaints bulb + row icon).
+- Shared logic in `peris/devices/ledc-lib.js`; framework hooks
+  `Device.onBatch()` + `ctx.mmio` (see DEVICE-API.md).
 
 ## M4 · Bit-bang protocol devices + IR
 
@@ -54,5 +58,5 @@ esp-emulator releases (upgrade procedure in UPGRADE.md):
 
 - `update_esp_emu_browser.bat` (in `_tools`, currently empty): script the
   UPGRADE.md procedure.
-- `peris/mmio/`: add the C5/C6/H2/P4/S3 address tables (extracted from each
+- `src/core/mmio/`: add the C5/C6/H2/P4/S3 address tables (extracted from each
   chip's IDF soc headers, same method as M0).

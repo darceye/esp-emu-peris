@@ -95,7 +95,7 @@ export class TerminalView {
         const tag = perisVersion ? `+ peris ${perisVersion}` : '';
         this.writeln('\x1b[1;33m╔══════════════════════════════════════╗');
         this.writeln(`║   ESP-EMU ESP32 Emulator v0.51.0     ║`);
-        this.writeln(`║   ${pad(tag, 37)}║`);
+        this.writeln(`║   ${pad(tag, 35)}║`);
         this.writeln('║   Load a firmware .bin to begin      ║');
         this.writeln('╚══════════════════════════════════════╝\x1b[0m');
         this.writeln('');

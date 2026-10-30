@@ -36,7 +36,10 @@ and `docs/FEASIBILITY.md` (M0 measurements).
   it and idf.py refuses); see `tests/firmware/build.ps1`.
 - Firmware must be loaded into the browser as the **`idf.py merge-bin` merged
   image**; a bare app bin silently never starts (symptom: UART stays quiet
-  forever). Artifact: `tests/firmware/peris_probe/build/merged-binary.bin`.
+  forever). Artifact: `tests/firmware/peris_probe/build/merged-binary.bin`;
+  produce it with `tests/firmware/merge.ps1` — **merge-bin's `-o` path is
+  relative to the build dir**, so the intuitive `build/merged-binary.bin`
+  lands in `build/build/` and silently overwrites nothing.
 - `node --test <directory>` resolves incorrectly on Windows/Git Bash —
   **pass the .test.mjs file list explicitly** (package.json does).
 
@@ -46,9 +49,13 @@ and `docs/FEASIBILITY.md` (M0 measurements).
   output is the return string of `run_batch`.
 - **LEDC/RMT waveforms never appear in `gpio_state()`** (they go through the
   GPIO matrix); only CPU-direct GPIO writes are visible.
-  PWM → read the LEDC `DUTY_R` (value = duty×16), WS2812 → read the RMT
-  channel RAM (left over after transmission).
-  Address tables: `src/core/mmio/`; sources & verification: FEASIBILITY.md.
+  PWM → read the LEDC `DUTY_R` (value = duty×16, bits[18:4]; full-scale via
+  `conf0.TIMER_SEL` → timer `DUTY_RES` bits[3:0]; `conf0` bit2 = sig_out_en),
+  wiring → scan `GPIO_FUNCn_OUT_SEL_CFG` low 9 bits (LEDC ch0–5 = 45–50,
+  0x100 = plain GPIO), WS2812 → read the RMT channel RAM (left over after
+  transmission). One implementation of all of this: `peris/devices/ledc-lib.js`
+  — reuse, never fork. Address tables: `src/core/mmio/`; sources &
+  verification: FEASIBILITY.md.
 - **Time fast-forwards during `vTaskDelay`**: pin-level waveforms inside a
   sleep window cannot be captured, regardless of sample rate.
   Waveforms of CPU-active bit-banged signals can be sampled, but **consecutive
@@ -90,6 +97,15 @@ and `docs/FEASIBILITY.md` (M0 measurements).
    config-driven styling covers the icon too. Before changing behaviour, look
    for an existing function and reuse it; when review finds duplicated code,
    extract the shared function first, then change it.
+9. **Register-level devices (LEDC/RMT) poll MMIO on `onBatch()`** and get
+   their addresses from `ctx.mmio` (per-chip tables in `src/core/mmio/`; a
+   missing table means the device must idle). Shared device-side semantics
+   live in plain-JS helper modules under `peris/devices/` **outside the
+   manifest** (`ledc-lib.js` — wiring scan, duty decode, bulb painter +
+   animator) so both plugins and the unit tests import one implementation.
+   LEDC devices return `[]` from `pins()` (the wiring is firmware-side
+   routing, nothing to claim); the generic editor's `<select>` hands values
+   back as **strings** (`parseChannel` normalises; beware `Number(null)===0`).
 
 ## 4. Past bugs (prevent regressions)
 
@@ -109,11 +125,14 @@ and `docs/FEASIBILITY.md` (M0 measurements).
 ## 5. Testing & verification conventions
 
 - **Unit tests** (node:test, zero deps): pure logic — sigbus bit math, level
-  semantics, config validation, MMIO address tables. Mandatory after changing
-  core/devices; for a new device, follow `tests/unit/devices.test.mjs` and add
-  level/state semantics cases.
+  semantics, config validation, MMIO address tables, LEDC duty decode /
+  wiring scan / auto-binding against **fake MMIO** (a `Map<addr, u32>` +
+  the real C3 table, see `makeMmioCtx` in tests/unit/devices.test.mjs).
+  Mandatory after changing core/devices; for a new device, follow
+  `tests/unit/devices.test.mjs` and add level/state semantics cases.
 - **Integration smoke** `tests/m1_smoke.mjs`: real wasm + firmware + runtime +
-  devices. **Timing lessons**:
+  devices (S1–S6 GPIO devices, S7/S8 LEDC register-level devices driven by
+  the `###P2` markers). **Timing lessons**:
   - boot takes ~500+ batches (50k instr/batch) — do not hard-code batch
     numbers, **drive by UART markers** (the firmware prints `###P1 start/end`
     etc., see `tests/firmware/peris_probe/main/main.c`);

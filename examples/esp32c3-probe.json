@@ -3,6 +3,8 @@
     "chip": "esp32c3",
     "devices": [
         { "id": "led-1", "type": "led", "name": "Blink LED (GPIO8)", "pin": 8, "color": "#ff4d4d", "invert": false },
-        { "id": "btn-1", "type": "button", "name": "Probe button (GPIO3, ISR)", "pin": 3, "activeLow": true }
+        { "id": "btn-1", "type": "button", "name": "Probe button (GPIO3, ISR)", "pin": 3, "activeLow": true },
+        { "id": "pwm-1", "type": "pwm-led", "name": "Breathing LED (LEDC ch0)", "channel": "auto", "color": "#ffb340" },
+        { "id": "rgb-1", "type": "rgb-led", "name": "RGB LED (LEDC ch0/1/2)", "channelR": "auto", "channelG": "auto", "channelB": "auto" }
     ]
 }

@@ -4,6 +4,7 @@
  * JS, but editors pick up these types from the compiled .d.ts, and the
  * registry validates the shape at load time.
  */
+import type { ChipMmio } from './mmio.js';
 
 /** Snapshot of one GPIO pad, delivered on change via ctx.subscribe(). */
 export interface PinState {
@@ -20,6 +21,11 @@ export interface DeviceCtx {
     readonly id: string;
     readonly chip: string;
     readonly gpioCount: number;
+    /**
+     * Register address tables for ctx.chip (LEDC/RMT/GPIO matrix), or null
+     * when the chip has no table yet (register-level devices must idle).
+     */
+    readonly mmio: ChipMmio | null;
     /** Drive a pad input level; reaches guest reads and GPIO interrupts. */
     setPinInput(pin: number, high: boolean): void;
     /** Bus/MMIO read (little-endian), e.g. LEDC duty, RMT channel RAM. */
@@ -87,6 +93,13 @@ export interface DeviceLike {
     onCommand?(cmd: string, params?: Record<string, unknown>): void;
     /** Re-drive inputs after the emulator (re)loaded. */
     onEmuReady?(): void;
+    /**
+     * Called after every run_batch (after the pin sample). For
+     * register-level devices that poll MMIO (LEDC duty, RMT RAM) instead of
+     * subscribing to pin edges — GPIO-matrix signals never appear in
+     * onPinState (M0 Q2a/Q3a).
+     */
+    onBatch?(): void;
     getState?(): Record<string, unknown>;
     destroy?(): void;
 }

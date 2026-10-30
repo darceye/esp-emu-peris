@@ -10,6 +10,7 @@ import type { Registry } from './registry.js';
 import { PERIS_READY, PERIS_STATE, PERIS_LOG } from './protocol.js';
 import type { PerisReadyMsg, PerisStateMsg, PerisLogMsg } from './protocol.js';
 import { gpioCount, absentPins } from './chips.js';
+import { mmioFor } from './mmio.js';
 import type { DeviceCtx, DeviceConfig, DeviceLike, DeviceMeta, PerisConfig } from './types.js';
 
 const STATE_FLUSH_MS = 33; // ~30 fps per device
@@ -125,6 +126,9 @@ export class PerisRuntime {
     /** Called by the worker after every run_batch. */
     onBatchEnd() {
         this.sigbus.sample();
+        // Register-level devices (LEDC/RMT) poll MMIO on this tick — their
+        // signals never surface as pin changes (GPIO matrix, M0 Q2a/Q3a).
+        for (const { instance } of this.devices.values()) instance.onBatch?.();
         this.flushStates(false);
     }
 
@@ -169,6 +173,9 @@ export class PerisRuntime {
             id,
             get chip() { return rt.chip; },
             get gpioCount() { return gpioCount(rt.chip); },
+            // resolved per read: applyConfig may change the chip before the
+            // next emulator load
+            get mmio() { return mmioFor(rt.chip); },
             setPinInput: (pin, high) => rt.sigbus.setInput(pin, high),
             readMem: (addr, len) => rt.emu ? rt.emu.read_memory(addr >>> 0, len) : new Uint8Array(0),
             readU32(addr) {

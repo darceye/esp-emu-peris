@@ -37,8 +37,11 @@ export class Device {          // runs in the worker, talks to the emulator
 
     constructor(ctx, cfg) {}          // cfg = { id, type, ...device settings }
     onPinState(pin, s) {}             // pin-output change callback s={out, oe, cycles}
+    onBatch() {}                      // tick after every run_batch (MMIO polling,
+                                      //   register-level devices — see below)
     onCommand(cmd, params) {}         // user action sent from the page View
-    onEmuReady() {}                   // emulator (re)loaded: re-drive input levels
+    onEmuReady() {}                   // emulator (re)loaded: re-drive input levels /
+                                      //   reset cached register state
     getState() { return {...}; }      // serialisable state pushed to the View (~30fps)
     destroy() {}                      // release / restore pins
 }
@@ -89,12 +92,40 @@ The peripherals pane is its own column in the three-pane layout
 | member | description |
 |---|---|
 | `ctx.id` / `ctx.chip` / `ctx.gpioCount` | device id, chip model, GPIO count |
+| `ctx.mmio` | register address tables for `ctx.chip` (LEDC/RMT/GPIO matrix), or `null` when the chip has no table yet — register-level devices must idle then |
 | `ctx.setPinInput(pin, high)` | drive a pin's input level (firmware reads it; raises GPIO interrupts) |
 | `ctx.subscribe(pins)` / `ctx.unsubscribe()` | subscribe to pin-output changes (onPinState) |
 | `ctx.readMem(addr, len)` / `ctx.readU32(addr)` | bus/MMIO reads (LEDC duty, RMT RAM, …) |
 | `ctx.cycles()` | emulator cycle counter |
 | `ctx.markDirty()` | request getState() to be pushed to the page soon |
 | `ctx.log(text, level?)` | print a `[Peris]` line on the UART console |
+
+## Register-level devices (M2+)
+
+Signals routed through the **GPIO matrix (LEDC, RMT) never appear in
+`onPinState`** (M0 Q2a/Q3a) — a device for such a peripheral polls MMIO
+instead:
+
+- implement `onBatch()` (called after every `run_batch`, after the pin
+  sample): read registers via `ctx.readU32` + `ctx.mmio` addresses, and
+  `ctx.markDirty()` only when the derived state actually changed (duties
+  are quantised to 1/1000 in ledc-lib so sub-visible changes stay quiet);
+- reset any cached register/wiring state in `onEmuReady()` — a fresh
+  emulator instance reads all zeros;
+- `static pins(cfg)` returns `[]` when the wiring is firmware-side routing
+  (LEDC devices claim no GPIO; two devices on one channel merely mirror).
+
+The M2 plugins keep every shared semantic in **`peris/devices/ledc-lib.js`**
+(channel parsing, `GPIO_FUNCn_OUT_SEL_CFG` wiring scan, DUTY_R/timer-DUTY_RES
+duty decode, canvas bulb painter + level animator): helper modules like it
+live in `peris/devices/` **outside the manifest** (only manifest-listed
+modules load as devices) and are imported relatively by the plugins and the
+unit tests — never fork a second duty decode or wiring scan.
+
+Two pitfalls the helpers already handle: the generic editor's `<select>`
+hands values back as **strings** (`parseChannel` accepts `'3'` and
+`Number(null) === 0` is guarded), and `idf.py merge-bin`'s `-o` is relative
+to the build dir (`tests/firmware/merge.ps1`).
 
 ## Message protocol (page ↔ worker)
 
@@ -137,7 +168,8 @@ Added on top of the stock worker protocol (see `peris/protocol.js`):
 1. **Pin outputs**: firmware GPIO writes are visible in `onPinState`
    (out+oe); **signals routed through the GPIO matrix (LEDC/RMT) never appear
    in the pin registers** — you must read MMIO (LEDC duty registers, RMT
-   channel RAM); address tables are in `peris/mmio/`.
+   channel RAM) on `onBatch()`; the address tables arrive via `ctx.mmio`
+   (sources: `src/core/mmio/`).
 2. **Pin inputs**: `ctx.setPinInput` genuinely reaches the firmware (reads +
    interrupts); button-type devices must re-drive their level in
    `onEmuReady` (levels reset when the emulator reloads).
@@ -159,3 +191,7 @@ Added on top of the stock worker protocol (see `peris/protocol.js`):
 - `peris/devices/button.js` — input device (setPinInput + onEmuReady)
 - `peris/devices/touch-button.js` — inherits button's Device, different View
 - `peris/devices/toggle-switch.js` — latching input device
+- `peris/devices/pwm-led.js` / `rgb-led.js` — register-level devices
+  (onBatch + ctx.mmio + ledc-lib wiring scan/duty decode, canvas
+  interpolation View)
+- `peris/devices/ledc-lib.js` — shared helper module (not a device)

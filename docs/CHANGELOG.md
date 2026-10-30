@@ -8,6 +8,46 @@ CHANGELOG.zh-cn.md).
 Rules: major = breaking protocol/architecture change; minor = new capability;
 patch = fixes and small changes.
 
+## peris 0.6.0 (M2)
+
+- **PWM LED** (`pwm-led.js` v1.0.0): an LED dimmed by one LEDC channel. The
+  duty is read from the LEDC `DUTY_R` register after every batch — exact
+  values, no aliasing (the M0 Q2b path; pad-level PWM never reaches the
+  GPIO registers). The channel is auto-discovered from the GPIO-matrix
+  routing (`GPIO_FUNCn_OUT_SEL_CFG`) and followed across firmware
+  rewirings, or picked manually; the caption shows the live
+  `LEDC ch → GPIO` wiring.
+- **RGB LED** (`rgb-led.js` v1.0.0): three diodes on three LEDC channels.
+  Auto mode maps the lowest routed channels to R/G/B in order (typical
+  firmware wiring ch0/ch1/ch2); manually set colours are excluded from the
+  auto assignment. The View mixes the three channels additively on a
+  canvas, like real diodes.
+- **Smooth breathing rendering**: state pushes arrive at only ~30fps, so
+  both new Views interpolate brightness on a canvas — one rAF animator per
+  plugin repaints the details bulb **and** the row icon through a single
+  `_apply` path (AGENT §3.8), easing with an exponential time constant.
+- **Device API v1 additions** (backwards compatible): optional
+  `Device.onBatch()` tick after every `run_batch` (the hook for
+  MMIO-polling devices — their signals never appear as pin changes), and
+  `ctx.mmio` (the chip's register address tables resolved via
+  `mmioFor(chip)`, or null when the chip has no table yet). The C3 table
+  gained the LEDC timer config addresses and the complete LEDC ch0–5
+  GPIO-matrix signal ids (45–50). Shared device-side logic lives in
+  `peris/devices/ledc-lib.js` (wiring scan, duty decode, canvas/animator
+  helpers) — imported relatively by both plugins and by the unit tests;
+  not listed in the manifest, so it never loads as a device.
+- Test firmware: the P2 phase now drives LEDC ch1 (GPIO 6, mirrored
+  ramp) and ch2 (GPIO 7, constant half duty) alongside ch0; the `###P2`
+  markers still describe ch0 only, so the m0 probe is unchanged (all six
+  M0 conclusions re-verified). New `tests/firmware/merge.ps1` — `idf.py
+  merge-bin`'s `-o` is relative to the build dir (the obvious path writes
+  to `build/build/`).
+- Tests: unit tests against fake MMIO (DUTY_R decode across resolutions
+  and timer routing, matrix scan, auto/rebind semantics, render math);
+  integration smoke S7/S8 (auto-binding on real firmware, duty tracking
+  including the mirrored r+g sum). Docs: ROADMAP M2 → shipped; DEVICE-API
+  `onBatch`/`ctx.mmio` + shared-lib pattern; README capability table.
+
 ## peris 0.5.1
 
 - **Bilingual documentation**: every document now has an English version under
@@ -128,6 +168,8 @@ patch = fixes and small changes.
 
 | typeId | version | change |
 |---|---|---|
+| pwm-led | 1.0.0 | initial (M2): LEDC DUTY_R duty, auto/manual channel binding, canvas brightness interpolation |
+| rgb-led | 1.0.0 | initial (M2): three LEDC channels mixed additively, lowest-channel auto assignment |
 | led | 1.1.1 | fix: row-icon colour disagreed with config — one `setColour` for bulb + row icon |
 | button | 1.1.0 | row press icon (press/release); activeLow declared as the V/G badge |
 | touch-button | 1.1.0 | row touch icon (inherits button's badge declaration) |

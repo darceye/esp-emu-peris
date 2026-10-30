@@ -6,6 +6,38 @@
 与英文版 CHANGELOG.md)。
 规则:主版本=协议/架构破坏性变更;次版本=新能力;修订=修复与小改。
 
+## peris 0.6.0(M2)
+
+- **PWM 调光 LED**(`pwm-led.js` v1.0.0):由单个 LEDC 通道调光的 LED。
+  每个 batch 后读 LEDC `DUTY_R` 寄存器取占空比——精确无混叠(M0 Q2b
+  路线;焊盘级 PWM 波形永远到不了 GPIO 寄存器)。通道由 GPIO 矩阵路由
+  (`GPIO_FUNCn_OUT_SEL_CFG`)自动发现,并持续跟随固件重新接线;也可手动
+  指定;标题栏实时显示 `LEDC ch → GPIO` 接线。
+- **RGB LED**(`rgb-led.js` v1.0.0):三只二极管各占一个 LEDC 通道。
+  自动模式把序号最小的已路由通道依次映射到 R/G/B(匹配固件常见的
+  ch0/ch1/ch2 接法);手动指定的颜色通道不参与自动分配。View 在 canvas
+  上做加法混色,与真实二极管一致。
+- **呼吸灯平滑渲染**:状态推送只有 ~30fps,两个新 View 均在 canvas 上
+  做亮度插值——每个插件一个 rAF 动画器,经单一 `_apply` 路径同时重绘
+  详情灯泡**和**行内图标(AGENT §3.8),指数时间常数缓动。
+- **设备 API v1 扩展**(向后兼容):可选的 `Device.onBatch()`——每个
+  `run_batch` 后的节拍(MMIO 轮询设备的挂载点,这类信号不会产生引脚
+  变化事件);`ctx.mmio`(经 `mmioFor(chip)` 解析的芯片寄存器地址表,
+  芯片无表时为 null)。C3 表补齐 LEDC timer 配置寄存器地址与完整的
+  LEDC ch0–5 GPIO 矩阵信号号(45–50)。设备侧共享逻辑集中在
+  `peris/devices/ledc-lib.js`(接线扫描、占空比解码、canvas/动画器
+  辅助)——两个插件与单元测试都以相对路径引用;不在 manifest 内,
+  永不作为设备加载。
+- 测试固件:P2 相位在 ch0 之外同时驱动 LEDC ch1(GPIO6,反向渐变)与
+  ch2(GPIO7,恒定半占空比);`###P2` 标记仍只描述 ch0,m0 探针不受影响
+  (六项 M0 结论已复测)。新增 `tests/firmware/merge.ps1`——`idf.py
+  merge-bin` 的 `-o` 相对 build 目录(直觉写法会落到 `build/build/`)。
+- 测试:基于假 MMIO 的单元测试(DUTY_R 跨分辨率/跨 timer 解码、矩阵
+  扫描、自动绑定/跟随重接线语义、渲染数学);集成冒烟 S7/S8(真实固件
+  上的自动接线、占空比跟踪含 r+g 镜像和校验)。文档:ROADMAP M2 →
+  已交付;DEVICE-API 补 `onBatch`/`ctx.mmio` 与共享库模式;README
+  能力表。
+
 ## peris 0.5.1
 
 - **文档双语化**:所有文档提供英文版(默认文件名)与中文版(`*.zh-cn.md`)
@@ -95,6 +127,8 @@
 
 | typeId | 版本 | 变更 |
 |---|---|---|
+| pwm-led | 1.0.0 | 初版(M2):LEDC DUTY_R 占空比、通道自动/手动绑定、canvas 亮度插值 |
+| rgb-led | 1.0.0 | 初版(M2):三 LEDC 通道加法混色、最小通道号自动分配 |
 | led | 1.1.1 | 修复:行图标颜色与配置不一致——统一 setColour 应用到灯泡+行图标 |
 | button | 1.1.0 | 行内按压图标(press/release);activeLow 声明为 V/G 徽章 |
 | touch-button | 1.1.0 | 行内触摸图标(继承 button 的徽章声明) |

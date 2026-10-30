@@ -22,11 +22,12 @@
 │                            ← peris_state / peris_command →                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ build/core/worker.ts  上游 worker 复刻 + 6 处 peris: 钩子(唯一可碰上游逻辑) │
-│ build/core/runtime.ts 设备宿主:配置校验/实例化/命令/状态节流推送             │
+│ build/core/runtime.ts 设备宿主:配置校验/实例化/命令/onBatch MMIO 节拍+状态节流推送 │
 │ build/core/sigbus.ts  引脚信号总线:每批 gpio_state() 差分分发               │
 │ build/core/registry.ts 插件注册表(manifest 驱动 + 元数据校验)              │
 │ build/core/{version,types,protocol,chips,mmio}.ts  版本/契约/消息/芯片表/寄存器表 │
-│ worker 侧设备 Device(peris/devices/*.js 的 Device 类)                      │
+│ worker 侧设备 Device(peris/devices/*.js 的 Device 类;ledc-lib.js 等共享辅助 │
+│                       模块在 manifest 之外)                                 │
 └───────────────────────────────────────────────────┬─────────────────────────┘
                                                     │ WasmEmulator(闭源 wasm,
                                                     │ 只此一处触碰)
@@ -48,7 +49,10 @@
 
 - **固件 → 设备**:worker 每批 `run_batch()` 后 `runtime.onBatchEnd()` → `sigbus.sample()`
   读 `gpio_state()`(4 个 32 位字),按**联合变化掩码**(out|oe)对每个变化引脚分发一次
-  `onPinState`。无变化时成本 = 1 次 wasm 调用 + 4 次 XOR。
+  `onPinState`。无变化时成本 = 1 次 wasm 调用 + 4 次 XOR。寄存器级设备
+  (LEDC/RMT)在同一次调用里额外获得一次 `onBatch()` 节拍,经
+  `ctx.readU32`/`ctx.mmio` 轮询 MMIO——它们的信号不会产生引脚变化
+  (GPIO 矩阵,M0 Q2a/Q3a)。
 - **设备 → 页面**:设备 `markDirty()` → `flushStates` 节流 ~30fps;**节流窗口内挂尾随
   定时器,保证最后一次 dirty 必达**(否则静止在窗口内的最终状态会被丢弃)。
 - **页面 → 设备**:View `sendCmd()` → `peris_command` → `runtime.command()` → `onCommand`。
@@ -65,7 +69,8 @@
 src/core/        worker 侧框架(TS 源)        → 编译到 build/core/
 src/ui/          页面侧模块(TS 源)            → 编译到 build/ui/
 build/           tsc 产物(未入 git;HTML/worker/测试都引用这里)
-peris/devices/   设备插件(JS 源,不编译;manifest.json 注册;各自版本号)
+peris/devices/   设备插件(JS 源,不编译;manifest.json 注册;各自版本号;
+                 ledc-lib.js 等共享辅助模块同目录但不进 manifest)
 peris/vendor/    xterm 本地化
 peris/peris.css  peris 专属样式
 tests/unit/      单元测试(node:test,零依赖)
@@ -85,10 +90,12 @@ npm run serve               # python serve.py(合并服务仓库与 www/pkg)
 npm run sync                # 发布进官方 www(先 build)
 ```
 
-测试分层:**单元**(纯逻辑:位运算/电平语义/校验/行式徽章推导——快、定位准)→ **集成**(真实
-wasm+固件全链路)→ **GUI**(手动清单:页面加载、三栏同屏可见、加设备
+测试分层:**单元**(纯逻辑:位运算/电平语义/校验/行式徽章推导/基于假 MMIO 的
+LEDC 寄存器解码——快、定位准)→ **集成**(真实 wasm+固件全链路;S7/S8 以
+`###P2` 标记驱动)→ **GUI**(手动清单:页面加载、三栏同屏可见、加设备
 后行式渲染、行内改名/改 GPIO/翻 V·G、行内图标交互(点灯换色/按压/开关)、展开详情
-与配置编辑、拖动排序、载固件、Run 后 LED 翻转、配置导入导出往返;浏览器自动化待
+与配置编辑、拖动排序、载固件、Run 后 LED 翻转、PWM/RGB LED 自动绑定固件
+LEDC 通道且 P2 阶段呼吸平滑渐变、配置导入导出往返;浏览器自动化待
 网络环境允许时引入 Playwright,
 `PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright`)。
 

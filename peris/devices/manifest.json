@@ -3,6 +3,8 @@
         { "module": "led.js" },
         { "module": "button.js" },
         { "module": "touch-button.js" },
-        { "module": "toggle-switch.js" }
+        { "module": "toggle-switch.js" },
+        { "module": "pwm-led.js" },
+        { "module": "rgb-led.js" }
     ]
 }

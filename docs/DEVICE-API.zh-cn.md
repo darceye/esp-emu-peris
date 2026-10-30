@@ -32,8 +32,11 @@ export class Device {          // 运行在 worker,与模拟器交互
 
     constructor(ctx, cfg) {}          // cfg = { id, type, ...设备配置 }
     onPinState(pin, s) {}             // 引脚输出变化回调 s={out, oe, cycles}
+    onBatch() {}                      // 每个 run_batch 后的节拍(MMIO 轮询,
+                                      //   寄存器级设备专用,见下文)
     onCommand(cmd, params) {}         // 页面 View 发来的用户操作
-    onEmuReady() {}                   // 模拟器(重)加载后:重新驱动输入电平
+    onEmuReady() {}                   // 模拟器(重)加载后:重新驱动输入电平/
+                                      //   复位缓存的寄存器状态
     getState() { return {...}; }      // 可序列化状态,推给页面 View(~30fps)
     destroy() {}                      // 释放/恢复引脚
 }
@@ -75,12 +78,35 @@ export class View {             // 运行在页面,渲染设备视图
 | 成员 | 说明 |
 |---|---|
 | `ctx.id` / `ctx.chip` / `ctx.gpioCount` | 设备 id、芯片型号、GPIO 数 |
+| `ctx.mmio` | 当前芯片的寄存器地址表(LEDC/RMT/GPIO 矩阵);芯片暂无表时为 null——寄存器级设备此时必须闲置 |
 | `ctx.setPinInput(pin, high)` | 驱动引脚输入电平(固件可读到、可触发 GPIO 中断) |
 | `ctx.subscribe(pins)` / `ctx.unsubscribe()` | 订阅引脚输出变化(onPinState) |
 | `ctx.readMem(addr, len)` / `ctx.readU32(addr)` | 总线/MMIO 读取(LEDC duty、RMT RAM 等) |
 | `ctx.cycles()` | 模拟器周期计数 |
 | `ctx.markDirty()` | 请求尽快把 getState() 推给页面 |
 | `ctx.log(text, level?)` | 在 UART 控制台打一条 `[Peris]` 日志 |
+
+## 寄存器级设备(M2+)
+
+经 **GPIO 矩阵路由的信号(LEDC、RMT)不会出现在 `onPinState`**(M0
+Q2a/Q3a)——这类外设的设备改为轮询 MMIO:
+
+- 实现 `onBatch()`(每个 `run_batch` 后、引脚采样之后调用):用
+  `ctx.readU32` + `ctx.mmio` 地址读寄存器,仅在派生状态**真正变化**时
+  `ctx.markDirty()`(ledc-lib 把占空比量化到 1/1000,次可见变化不推送);
+- 在 `onEmuReady()` 里复位缓存的寄存器/接线状态——新模拟器实例全表读 0;
+- 接线由固件侧路由决定时 `static pins(cfg)` 返回 `[]`(LEDC 设备不声明
+  GPIO;两个设备盯同一通道只是镜像显示)。
+
+M2 插件把所有共享语义集中在 **`peris/devices/ledc-lib.js`**(通道值解析、
+`GPIO_FUNCn_OUT_SEL_CFG` 接线扫描、DUTY_R/定时器 DUTY_RES 占空比解码、
+canvas 灯泡绘制 + 电平动画器):这类辅助模块放在 `peris/devices/` 下但
+**不进 manifest**(只有 manifest 列出的模块才作为设备加载),由插件与
+单元测试以相对路径引用——禁止另起一份占空比解码或接线扫描。
+
+辅助函数已处理好的两个坑:通用编辑器的 `<select>` 回传**字符串**
+(`parseChannel` 接受 `'3'`,并防住 `Number(null)===0`);`idf.py merge-bin`
+的 `-o` 相对 build 目录(`tests/firmware/merge.ps1`)。
 
 ## 消息协议(页面 ↔ worker)
 
@@ -113,7 +139,7 @@ export class View {             // 运行在页面,渲染设备视图
 
 ## 设备开发注意事项(源自 M0 实测,见 FEASIBILITY.zh-cn.md)
 
-1. **引脚输出**:固件主动 GPIO 输出在 `onPinState` 可见(out+oe);**LEDC/RMT 走 GPIO matrix 的信号不出现在引脚寄存器**,必须读 MMIO(LEDC duty 寄存器、RMT 通道 RAM),地址表在 `peris/mmio/`。
+1. **引脚输出**:固件主动 GPIO 输出在 `onPinState` 可见(out+oe);**LEDC/RMT 走 GPIO matrix 的信号不出现在引脚寄存器**,必须改在 `onBatch()` 里读 MMIO(LEDC duty 寄存器、RMT 通道 RAM);地址表经 `ctx.mmio` 提供(源码在 `src/core/mmio/`)。
 2. **引脚输入**:`ctx.setPinInput` 会真实进入固件(读值+中断),按键类设备在 `onEmuReady` 里要重新驱动电平(模拟器重载后电平复位)。
 3. **时间**:`vTaskDelay` 期间模拟器时间快进,不要试图在 CPU 睡眠窗口做引脚级波形捕获;CPU 活跃的位绑定波形可在 run_batch 批间采样,但请节制(细批约 99 MIPS,粗批 5000+ MIPS)。
 4. 状态推送节流 ~30fps;`getState()` 返回的对象会 postMessage,保持小而可序列化。
@@ -127,3 +153,6 @@ export class View {             // 运行在页面,渲染设备视图
 - `peris/devices/button.js` — 输入型设备(setPinInput + onEmuReady)
 - `peris/devices/touch-button.js` — 继承 button 的 Device,换 View
 - `peris/devices/toggle-switch.js` — 保持型输入设备
+- `peris/devices/pwm-led.js` / `rgb-led.js` — 寄存器级设备
+  (onBatch + ctx.mmio + ledc-lib 接线扫描/占空比解码,canvas 插值 View)
+- `peris/devices/ledc-lib.js` — 共享辅助模块(不是设备)

@@ -10,6 +10,10 @@
  *   S4 toggle-switch drives its pin level
  *   S5 pin conflict rejected with a peris_ready error
  *   S6 unknown device type rejected
+ *   S7 pwm-led auto-discovers the LEDC wiring (ch0 → GPIO9) and its duty
+ *      tracks the firmware P2 breathing ramp (M2)
+ *   S8 rgb-led auto-binds ch0/1/2 → R/G/B (GPIO 9/6/7); red ramps up,
+ *      green mirrors down, blue holds half duty (M2)
  *
  * Usage: node tests/m1_smoke.mjs [merged-firmware.bin]
  */
@@ -28,7 +32,7 @@ initSync(readFileSync(path.join(WWW, 'pkg/esp_emu_bg.wasm')));
 
 const { PerisRuntime } = await import(pathToFileURL(path.join(REPO, 'build/core/runtime.js')).href);
 const devices = {};
-for (const m of ['led', 'button', 'touch-button', 'toggle-switch']) {
+for (const m of ['led', 'button', 'touch-button', 'toggle-switch', 'pwm-led', 'rgb-led']) {
     devices[m] = await import(pathToFileURL(path.join(REPO, `peris/devices/${m}.js`)).href);
 }
 const registry = {
@@ -62,6 +66,7 @@ const check = (name, ok, detail = '') => {
 let uart = '';
 let uartScan = 0; // cumulative marker scan position
 let inP1 = false;
+let inP2 = false;
 function trackMarkers() {
     for (;;) {
         const nl = uart.indexOf('\n', uartScan);
@@ -70,6 +75,8 @@ function trackMarkers() {
         uartScan = nl + 1;
         if (line === '###P1 start') inP1 = true;
         else if (line === '###P1 end') inP1 = false;
+        else if (line === '###P2 start') inP2 = true;
+        else if (line === '###P2 end') inP2 = false;
     }
 }
 function runBatches(n, size = 50000) {
@@ -87,12 +94,14 @@ await rt.applyConfig({
         { id: 'led-1', type: 'led', pin: 8, color: '#ff4d4d', name: 'L' },
         { id: 'btn-1', type: 'button', pin: 3, activeLow: true },
         { id: 'sw-1', type: 'toggle-switch', pin: 5, initial: false },
+        { id: 'pwm-1', type: 'pwm-led', channel: 'auto' },
+        { id: 'rgb-1', type: 'rgb-led' },
     ],
 });
 const ready1 = msgs.find((m) => m.type === 'peris_ready');
-check('S1 config applied', ready1?.ok === true && ready1.devices.length === 3);
+check('S1 config applied', ready1?.ok === true && ready1.devices.length === 5);
 check('S1 initial states pushed',
-    ['led-1', 'btn-1', 'sw-1'].every((id) => states().some((s) => s.id === id)));
+    ['led-1', 'btn-1', 'sw-1', 'pwm-1', 'rgb-1'].every((id) => states().some((s) => s.id === id)));
 
 // S4: toggle switch drives pin level (GPIO5 input)
 rt.command('sw-1', 'set', { on: true });
@@ -136,6 +145,52 @@ const anyCount = btnCounts.some((c) => c > 0);
 if (process.env.VERBOSE) console.log('DEBUG btnCounts:', btnCounts.join(','), 'made:', made, 'inP1:', inP1, 'uartLen:', uart.length);
 check('S3 button pulses reach guest ISR', anyCount && lastBtn >= 2,
     `${made} pulses, last btn=${lastBtn}`);
+
+// S7/S8: advance into the next P2 (LEDC) phase. The firmware wires
+// ch0→GPIO9, ch1→GPIO6, ch2→GPIO7 at boot and drives them inside P2:
+// ch0 breathes 0→max→0 then flats 0/50%/max, ch1 mirrors down, ch2 holds
+// half duty. State pushes are wall-clock throttled, so yield a little
+// wall time inside the loop for flushes to go out.
+for (let i = 0; i < 15000 && !inP2; i++) {
+    uart += emu.run_batch(50000);
+    trackMarkers();
+    rt.onBatchEnd();
+}
+check('S7/S8 reached the P2 LEDC phase', inP2);
+msgs.length = 0;
+rt.flushStates(true);
+for (let i = 0; i < 20000 && inP2; i++) {
+    uart += emu.run_batch(50000);
+    trackMarkers();
+    rt.onBatchEnd();
+    if (i % 50 === 0) await new Promise((r) => setTimeout(r, 5));
+}
+await new Promise((r) => setTimeout(r, 60)); // trailing flush (33ms throttle)
+
+const pwmStates = states().filter((s) => s.id === 'pwm-1').map((s) => s.state);
+if (process.env.VERBOSE) console.log('DEBUG pwm states:', JSON.stringify(pwmStates.slice(-8)));
+check('S7 pwm-led auto-binds ch0 on GPIO9',
+    pwmStates.some((s) => s.channel === 0 && s.pin === 9));
+const duties = pwmStates.map((s) => s.duty || 0);
+check('S7 pwm-led duty tracks the breathing ramp',
+    duties.length > 0 && Math.max(...duties) >= 0.9
+    && duties.some((d) => d >= 0.45 && d <= 0.55) && Math.min(...duties) <= 0.01,
+    `${duties.length} samples, min ${Math.min(...duties, 0)}, max ${duties.length ? Math.max(...duties) : 0}`);
+
+const rgbStates = states().filter((s) => s.id === 'rgb-1').map((s) => s.state);
+if (process.env.VERBOSE) console.log('DEBUG rgb states:', JSON.stringify(rgbStates.slice(-8)));
+check('S8 rgb-led auto-binds ch0/1/2 → R/G/B (GPIO 9/6/7)',
+    rgbStates.some((s) => s.channels?.r === 0 && s.channels?.g === 1 && s.channels?.b === 2
+        && s.pins?.r === 9 && s.pins?.g === 6 && s.pins?.b === 7));
+const reds = rgbStates.map((s) => s.r || 0);
+const greens = rgbStates.map((s) => s.g || 0);
+const blues = rgbStates.map((s) => s.b || 0);
+check('S8 rgb-led duties track: red ramps, green mirrors, blue holds half',
+    rgbStates.length > 0 && Math.max(...reds) >= 0.9 && Math.max(...greens) >= 0.9
+    && blues.some((b) => b >= 0.45 && b <= 0.55)
+    && rgbStates.some((s) => (s.r || 0) > 0.05 && (s.r || 0) + (s.g || 0) >= 0.94
+        && (s.r || 0) + (s.g || 0) <= 1.06),
+    `${rgbStates.length} samples`);
 
 // S5: conflict rejected
 msgs.length = 0;

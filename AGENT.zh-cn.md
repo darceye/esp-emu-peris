@@ -30,7 +30,9 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
   `C:\Users\A\Desktop\quick\idfm.bat`(PowerShell profile)。脚本化调用**必须清掉
   `MSYSTEM` 环境变量**(Git Bash 继承它,idf.py 会拒绝),参考 `tests/firmware/build.ps1`。
 - 固件加载进浏览器**必须 `idf.py merge-bin`** 的 merged image;裸 app bin 无声不启动
-  (症状:UART 永远无输出)。产物:`tests/firmware/peris_probe/build/merged-binary.bin`。
+  (症状:UART 永远无输出)。产物:`tests/firmware/peris_probe/build/merged-binary.bin`,
+  用 `tests/firmware/merge.ps1` 生成——**merge-bin 的 `-o` 相对 build 目录**,
+  直觉写法 `build/merged-binary.bin` 会落到 `build/build/` 且无声失败。
 - `node --test <目录>` 在 Windows/Git Bash 下解析异常,**显式传 .test.mjs 文件列表**
   (package.json 已如此)。
 
@@ -38,7 +40,10 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
 
 - **没有回调**,一切靠 `run_batch()` 批间轮询;UART 输出是 `run_batch` 的返回字符串。
 - **LEDC/RMT 波形不出现在 `gpio_state()`**(它们走 GPIO matrix);只有 CPU 直写 GPIO 可见。
-  PWM→读 LEDC `DUTY_R`(值=duty×16),WS2812→读 RMT 通道 RAM(发送后留存)。
+  PWM→读 LEDC `DUTY_R`(值=duty×16,bits[18:4];满量程经 `conf0.TIMER_SEL`→timer
+  `DUTY_RES` bits[3:0];`conf0` bit2=sig_out_en),接线→扫 `GPIO_FUNCn_OUT_SEL_CFG`
+  低 9 位(LEDC ch0–5=45–50,0x100=普通 GPIO),WS2812→读 RMT 通道 RAM(发送后留存)。
+  以上全部只有一份实现:`peris/devices/ledc-lib.js`——复用,禁止另写。
   地址表:`src/core/mmio/`,来源与验证:FEASIBILITY.zh-cn.md。
 - **`vTaskDelay` 期间时间快进**:睡眠窗口内引脚级波形不可捕获,与采样率无关。
   CPU 活跃的位绑定波形可采样,但**同一批次间隙内连续翻转输入会丢边沿**
@@ -67,6 +72,13 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
    单写一份样式逻辑;面板对 View 固定 **先 `rowIcon` 后 `setConfig`**,
    保证配置式样能覆盖到图标。改行为前先找有没有既有函数,有就复用;
    review 发现两处雷同代码时,先抽公共函数再改。
+9. **寄存器级设备(LEDC/RMT)在 `onBatch()` 里轮询 MMIO**,地址来自
+   `ctx.mmio`(各芯片表在 `src/core/mmio/`;无表=设备必须闲置)。设备侧共享
+   语义放在 `peris/devices/` 下**不进 manifest** 的原生 JS 辅助模块
+   (`ledc-lib.js`——接线扫描、占空比解码、灯泡绘制+动画器),插件与单元测试
+   引用同一份实现。LEDC 设备的 `pins()` 返回 `[]`(接线是固件侧路由,无可声明);
+   通用编辑器的 `<select>` 回传**字符串**(`parseChannel` 归一化;小心
+   `Number(null)===0`)。
 
 ## 4. 曾踩过的 bug(防止回潮)
 
@@ -86,9 +98,13 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
 ## 5. 测试与验证约定
 
 - **单元测试**(node:test,零依赖):纯逻辑——sigbus 位运算、电平语义、配置校验、
-  MMIO 地址表。改 core/devices 必跑;新增设备请仿照 `tests/unit/devices.test.mjs`
+  MMIO 地址表,以及基于**假 MMIO** 的 LEDC 占空比解码/接线扫描/自动绑定语义
+  (`Map<addr,u32>` + 真实 C3 表,见 tests/unit/devices.test.mjs 的 `makeMmioCtx`)。
+  改 core/devices 必跑;新增设备请仿照 `tests/unit/devices.test.mjs`
   补电平/状态语义用例。
-- **集成冒烟** `tests/m1_smoke.mjs`:真实 wasm+固件+runtime+设备。**时序经验**:
+- **集成冒烟** `tests/m1_smoke.mjs`:真实 wasm+固件+runtime+设备
+  (S1–S6 GPIO 设备,S7/S8 为 LEDC 寄存器级设备,按 `###P2` 标记驱动)。
+  **时序经验**:
   - boot 约占 500+ 批(50k 指令/批),别盲选批次号,**按 UART 标记驱动**
     (固件用 `###P1 start/end` 等标记,见 `tests/firmware/peris_probe/main/main.c`);
   - 固件在每轮 P1 start 把按键计数**清零**,计数可能只出现在 `###P1 end btn=N` 行,
