@@ -415,21 +415,17 @@
             <div id="terminal-container"></div>
         </section>
 
-        <aside class="side-panel">
-            <div class="panel-tabs">
-                <button class="ptab active" data-pane="peris">Peripherals</button>
-                <button class="ptab" data-pane="debug">Debug</button>
+        <aside class="peris-panel" id="pane-peris" aria-label="Peripherals">
+            <div class="panel-head">Peripherals</div>
+            <div class="peris-toolbar">
+                <select id="peris-add" title="Add a peripheral"></select>
+                <button id="peris-add-btn" class="btn small primary">Add</button>
+                <button id="peris-export-btn" class="btn small" title="Download the wiring config as JSON">Export</button>
+                <button id="peris-import-btn" class="btn small" title="Load a wiring config from a JSON file">Import</button>
+                <input type="file" id="peris-import-file" accept=".json" hidden>
             </div>
-
-            <div class="pane" id="pane-peris">
-                <div class="peris-toolbar">
-                    <select id="peris-add" title="Add a peripheral"></select>
-                    <button id="peris-add-btn" class="btn small primary">Add</button>
-                    <button id="peris-export-btn" class="btn small" title="Download the wiring config as JSON">Export</button>
-                    <button id="peris-import-btn" class="btn small" title="Load a wiring config from a JSON file">Import</button>
-                    <input type="file" id="peris-import-file" accept=".json" hidden>
-                </div>
-                <div id="peris-errors"></div>
+            <div id="peris-errors"></div>
+            <div class="peris-scroll">
                 <div id="peris-cards"></div>
                 <div id="peris-empty">
                     <strong>No peripherals wired yet.</strong><br>
@@ -437,8 +433,11 @@
                     peris <em>.json</em> config here / press Import.
                 </div>
             </div>
+        </aside>
 
-            <div class="pane hidden" id="pane-debug">
+        <aside class="side-panel">
+            <div class="panel-head">Debug</div>
+            <div class="pane" id="pane-debug">
                 <div class="panel-section">
                     <h3>Performance</h3>
                     <div class="tiles">

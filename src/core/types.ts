@@ -34,7 +34,11 @@ export interface DeviceCtx {
     log(text: string, level?: 'info' | 'warn' | 'error'): void;
 }
 
-/** One field of the generic config editor. */
+/**
+ * One field of the generic config editor. A `pin` field is additionally
+ * shown as the compact GPIO-number chip in the device row; a checkbox field
+ * marked `chip: 'pull'` is shown as the V/G idle-pull badge (click to flip).
+ */
 export interface ConfigField {
     key: string;
     label: string;
@@ -43,6 +47,10 @@ export interface ConfigField {
     max?: number;
     step?: number;
     options?: Array<{ value: string | number; label: string }>;
+    /** Render this checkbox as the row's V/G pull badge. */
+    chip?: 'pull';
+    /** Idle pull level while the checkbox is checked ('high' → V, 'low' → G). Defaults to 'high'. */
+    pullWhenChecked?: 'high' | 'low';
 }
 
 /** A device entry in a wiring config: { id, type, ...settings }. */
@@ -83,13 +91,28 @@ export interface DeviceLike {
     destroy?(): void;
 }
 
+/**
+ * Page-side handle handed to a View so it can request config changes
+ * (e.g. the LED row icon's colour picker) without touching the panel.
+ */
+export interface ViewHost {
+    /** Merge a patch into this device's config, re-apply and persist. */
+    updateConfig(patch: Record<string, unknown>): void;
+}
+
 /** Page-side view of a device plugin. */
 export interface ViewLike {
     render(state: Record<string, unknown>): void;
     setConfig?(cfg: DeviceConfig): void;
+    /**
+     * Optional: build the compact interactive icon shown in the device row
+     * (click actions: LED → colour picker, button → press, switch → toggle).
+     * The same render(state) calls drive it; `el` is a ~24px container.
+     */
+    rowIcon?(el: HTMLElement): void;
 }
 export interface ViewClass {
-    new (el: HTMLElement, sendCmd: (cmd: string, params?: Record<string, unknown>) => void): ViewLike;
+    new (el: HTMLElement, sendCmd: (cmd: string, params?: Record<string, unknown>) => void, host?: ViewHost): ViewLike;
 }
 
 export interface DeviceModule {

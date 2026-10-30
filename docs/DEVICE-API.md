@@ -18,11 +18,13 @@ export class Device {          // 运行在 worker,与模拟器交互
     static category    = 'basic';     // Add 菜单分组
     static description = '...';       // 一行说明(tooltip)
     static defaultConfig = {...};     // 新建实例的默认配置
-    static configSchema = [           // 通用配置编辑器字段
+    static configSchema = [           // 通用配置编辑器字段(展开详情内,一条一行)
         { key: 'pin',    label: 'GPIO pin', type: 'pin' },
         { key: 'color',  label: 'Colour',   type: 'color' },
         { key: 'name',   label: 'Label',    type: 'text' },
         // type 还支持: number(min/max/step)、select(options:[{value,label}])、checkbox
+        // checkbox 可加 chip:'pull' + pullWhenChecked:'high'|'low'
+        //   → 设备行上显示 V/G 闲置电平徽章(点击翻转),详见下文"行式 UI"
     ];
     static pins(cfg) { return [cfg.pin]; }   // 声明占用的 GPIO(用于冲突检测)
 
@@ -34,12 +36,37 @@ export class Device {          // 运行在 worker,与模拟器交互
     destroy() {}                      // 释放/恢复引脚
 }
 
-export class View {             // 运行在页面,渲染设备卡片主体
-    constructor(el, sendCmd) {}  // el=卡片主体容器; sendCmd(cmd, params)
-    render(state) {}             // state 来自 Device.getState()
+export class View {             // 运行在页面,渲染设备视图
+    constructor(el, sendCmd, host) {}  // el=详情区主体容器; sendCmd(cmd, params);
+                                       // host.updateConfig(patch) 请求改本设备配置
+    rowIcon(el) {}               // 可选:行内交互图标(el≈24px 容器),见下文
+    render(state) {}             // state 来自 Device.getState();行图标与详情主体一起驱动
     setConfig(cfg) {}            // 可选:配置编辑后回调(如换 LED 颜色)
 }
 ```
+
+## 行式 UI 约定(0.3.0+)
+
+外设面板是三栏布局中的独立一栏(控制台 | 外设 | Debug),每种外设占一行:
+
+```
+[交互图标] [名称] [GPIO号] [V/G]                [▸展开] [×删除] [⠿拖动]
+```
+
+- **交互图标**(`View.rowIcon(el)`):可点击的迷你控件,操作语义由插件定义——
+  LED 点击换色(取色器,经 `host.updateConfig({color})` 写回配置)、按键按下/
+  松开(连发 press/release)、拨动开关点击 toggle。`render(state)` 里同步刷新
+  图标状态(亮灭/按下/ON)。不实现 rowIcon 时显示首字母占位块。
+  **调用顺序**:面板固定先 `rowIcon` 后 `setConfig`,配置式样可覆盖到图标;
+  图标与详情主体是同一状态的两个视觉,插件必须共用同一 setter/render
+  (参考 led.js 的 `setColour()`),禁止为图标单写一份样式逻辑。
+- **名称 / GPIO 方框 / V·G 徽章**:由面板通用渲染,点击原地修改
+  (名称与 GPIO 走内联编辑,V/G 徽章直接翻转)。GPIO 方框取 schema 第一个
+  `type:'pin'` 字段;V/G 徽章取标记 `chip:'pull'` 的 checkbox——勾选时若
+  `pullWhenChecked:'high'`(默认)显示 V(上拉到 VCC),否则 G;未勾选相反。
+- **展开详情**:设备控件主体(`el`,即构造函数第一个参数)+ 全量配置编辑器
+  (一条属性一行)。行内放不下的高级功能一律放详情。
+- **拖动排序** ⠿:按下拖柄才启用拖拽,松手回写 devices 顺序(不重建 worker)。
 
 ## ctx(worker 侧设备上下文)
 
@@ -79,7 +106,9 @@ export class View {             // 运行在页面,渲染设备卡片主体
 2. **引脚输入**:`ctx.setPinInput` 会真实进入固件(读值+中断),按键类设备在 `onEmuReady` 里要重新驱动电平(模拟器重载后电平复位)。
 3. **时间**:`vTaskDelay` 期间模拟器时间快进,不要试图在 CPU 睡眠窗口做引脚级波形捕获;CPU 活跃的位绑定波形可在 run_batch 批间采样,但请节制(细批约 99 MIPS,粗批 5000+ MIPS)。
 4. 状态推送节流 ~30fps;`getState()` 返回的对象会 postMessage,保持小而可序列化。
-5. View 中所有用户交互统一通过 `sendCmd(cmd, params)` 发给 Device,不要在页面侧直接操作模拟器。
+5. View 中触发**设备动作**统一走 `sendCmd(cmd, params)`;**修改配置**(如行内换色)
+   走 `host.updateConfig(patch)`——配置的唯一事实源在页面 PerisPanel,worker 侧
+   不得缓存/改配置。不要在页面侧直接操作模拟器。
 
 ## 示例
 

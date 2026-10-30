@@ -56,6 +56,13 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.md` 与 `docs/FEASIBILITY.md`(M0
 6. 状态推送有 33ms 节流 + **尾随定时器**(保证最后一次 dirty 必达)——别删掉尾随逻辑,
    那是修过的真实缺陷(状态静默丢失)。
 7. sigbus 按批做 gpio_state 差分,**联合掩码**(out|oe)每引脚每批至多通知一次。
+8. **同语义代码必须复用,禁止复制一份再改**:同一逻辑只允许一份实现,所有
+   入口(行内 chip / 详情编辑器 / 行图标 / 新插件)调用同一函数——
+   GPIO 可选项= `config-editor.ts fillPinOptions()`;V·G 徽章推导=`rowChips()`;
+   插件多视觉元素(如 LED 灯泡+行图标)共用同一 setter/render,不许给图标
+   单写一份样式逻辑;面板对 View 固定 **先 `rowIcon` 后 `setConfig`**,
+   保证配置式样能覆盖到图标。改行为前先找有没有既有函数,有就复用;
+  review 发现两处雷同代码时,先抽公共函数再改。
 
 ## 4. 曾踩过的 bug(防止回潮)
 
@@ -69,6 +76,8 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.md` 与 `docs/FEASIBILITY.md`(M0
 | 按键 activeLow 电平写反 | idle=高、pressed=低(active-low 上拉接法);单测固定语义 |
 | Worker URL 相对**页面**解析,不是相对 import 的模块 | worker-client 里写页面相对路径 `build/core/worker.js` |
 | 节流窗口丢最后一次状态 | 尾随 flush(见 §3.7) |
+| LED 行图标颜色与详情灯泡不一致(0.3.0) | 面板曾先 setConfig 后 rowIcon,且插件两处各自设色;统一 setColour + 固定调用顺序(§3.8) |
+| 换芯片加载固件后,详情编辑器 GPIO 选项仍是旧芯片(0.3.0) | 编辑器把 validPins 快照在构建时;芯片变化必须重建编辑器;选项构建统一走 fillPinOptions(§3.8) |
 
 ## 5. 测试与验证约定
 

@@ -168,10 +168,11 @@ class App {
                         this.applyMachineInfo({ ...this.machine, ...msg });
                         this.term.writeln('\x1b[33m[System] Emulator reset\x1b[0m');
                         this.term.writeln(`\x1b[32m[System] Firmware reloaded, PC=0x${msg.pc.toString(16)}\x1b[0m`);
-                        this.firmwareLoaded = true;
-                        this.debug.renderCores([msg.pc], this.machine.chip);
-                        this.perf.updateTiles(0);
-                        this.setStatus('ready', 'Ready');
+                    this.firmwareLoaded = true;
+                    this.debug.renderCores([msg.pc], this.machine.chip);
+                    this.perf.updateTiles(0);
+                    this.peris.refreshForChip(); // pin options follow the (possibly new) chip
+                    this.setStatus('ready', 'Ready');
                     } else {
                         this.term.writeln('\x1b[33m[System] Emulator reset (no firmware)\x1b[0m');
                         this.firmwareLoaded = false;

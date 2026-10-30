@@ -4,7 +4,7 @@
  */
 export class Device {
     static typeId = 'toggle-switch';
-    static version = '1.0.0';
+    static version = '1.1.0';
     static title = 'Toggle switch';
     static category = 'basic';
     static description = 'Latching switch driving a GPIO input level.';
@@ -12,7 +12,8 @@ export class Device {
     static pins(cfg) { return [cfg.pin]; }
     static configSchema = [
         { key: 'pin', label: 'GPIO pin', type: 'pin' },
-        { key: 'activeLow', label: 'Active low', type: 'checkbox' },
+        // chip:'pull' → the row shows V (pull-up) when activeLow, G otherwise
+        { key: 'activeLow', label: 'Active low', type: 'checkbox', chip: 'pull', pullWhenChecked: 'high' },
         { key: 'initial', label: 'Initial ON state', type: 'checkbox' },
         { key: 'name', label: 'Label', type: 'text' },
     ];
@@ -61,8 +62,22 @@ export class View {
         this.text = wrap.querySelector('.sw-text');
         el.appendChild(wrap);
     }
+
+    /* Compact row icon: mini slide switch, click to toggle. */
+    rowIcon(el) {
+        el.title = 'Switch — click to toggle';
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'icon-toggle';
+        b.innerHTML = '<span class="mini-sw"><i></i></span>';
+        b.addEventListener('click', () => this.send('toggle'));
+        el.appendChild(b);
+        this.iconBtn = b;
+    }
+
     render(state) {
         this.input.checked = !!state.on;
         this.text.textContent = state.on ? 'ON' : 'OFF';
+        if (this.iconBtn) this.iconBtn.classList.toggle('on', !!state.on);
     }
 }

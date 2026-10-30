@@ -5,7 +5,7 @@
  */
 export class Device {
     static typeId = 'led';
-    static version = '1.0.0';
+    static version = '1.1.1';
     static title = 'LED';
     static category = 'basic';
     static description = 'Single-colour LED wired to a GPIO output.';
@@ -45,8 +45,12 @@ export class Device {
 }
 
 export class View {
-    constructor(el, sendCmd) {
+    constructor(el, sendCmd, host) {
         this.el = el;
+        this.send = sendCmd;
+        this.host = host; // host.updateConfig({color}) powers the row icon picker
+        this.colour = '#ff4d4d';
+        this.dot = null;
         el.className = 'dev-body led-body';
         const bulb = document.createElement('div');
         bulb.className = 'led-bulb';
@@ -62,13 +66,46 @@ export class View {
         el.appendChild(wrap);
         el.appendChild(cap);
     }
+
+    /* Compact row icon: a mini bulb that lights with the state; clicking it
+     * opens the colour picker and writes the choice back into the config. */
+    rowIcon(el) {
+        el.title = 'LED — click to change colour';
+        const dot = document.createElement('span');
+        dot.className = 'led-dot';
+        const picker = document.createElement('input');
+        picker.type = 'color';
+        picker.className = 'led-dot-picker';
+        picker.addEventListener('change', () => {
+            if (this.host) this.host.updateConfig({ color: picker.value });
+            else this.setColour(picker.value);
+        });
+        dot.appendChild(picker);
+        dot.addEventListener('click', () => { picker.value = this.colour; picker.click(); });
+        el.appendChild(dot);
+        this.dot = dot;
+        this.setColour(this.colour); // keep icon and bulb in lock-step
+    }
+
+    /* The ONE colour setter — applies to every LED visual (details bulb +
+     * row dot). Never style one of them anywhere else. */
+    setColour(color) {
+        this.colour = color || '#ff4d4d';
+        const bulb = this.halo ? this.halo.parentElement : null;
+        for (const t of [bulb, this.dot]) {
+            if (t) t.style.setProperty('--led-color', this.colour);
+        }
+    }
+
     render(state) {
         const bulb = this.halo.parentElement;
         bulb.classList.toggle('lit', !!state.on);
         bulb.classList.toggle('floating', state.driven === false);
         this.cap.textContent = state.driven === false ? 'not driven by firmware' : (state.on ? 'ON' : 'OFF');
+        if (this.dot) this.dot.classList.toggle('lit', !!state.on);
     }
+
     setConfig(cfg) {
-        this.halo.parentElement.style.setProperty('--led-color', cfg.color || '#ff4d4d');
+        this.setColour(cfg.color);
     }
 }

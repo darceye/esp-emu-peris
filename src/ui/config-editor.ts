@@ -1,7 +1,9 @@
 /*
  * Generic device config editor, driven by the device's configSchema.
- * Rendered inside each peripheral card; edits update the config object
- * through onChange and are then applied to the worker by the panel.
+ * Rendered in each peripheral row's expanded details; edits update the
+ * config object through onChange and are then applied to the worker by
+ * the panel. Also exports rowChips() and fillPinOptions() — the shared
+ * helpers behind the compact GPIO / V·G chips shown inline in the row.
  */
 import type { ConfigField, DeviceConfig, DeviceMeta } from '../core/types.js';
 
@@ -11,6 +13,23 @@ export interface EditorDeps {
     /** Pins already claimed by other devices (for "(in use)" hints). */
     usedPins(exceptId: string): Set<number>;
     onChange(): void;
+}
+
+/**
+ * Fill a <select> with the chip's valid GPIO options. This is the single
+ * source for every pin dropdown (details editor + row chip) — a second
+ * copy once drifted and served stale options, so reuse it, do not fork it.
+ */
+export function fillPinOptions(sel: HTMLSelectElement, valid: number[], used: Set<number>, current: unknown): void {
+    sel.innerHTML = '';
+    for (const p of valid) {
+        const opt = document.createElement('option');
+        opt.value = String(p);
+        opt.textContent = `GPIO ${p}` + (used.has(p) ? ' (in use)' : '');
+        sel.appendChild(opt);
+    }
+    sel.value = String(current);
+    if (sel.selectedIndex < 0 && sel.options.length) sel.value = sel.options[0].value;
 }
 
 export function buildConfigEditor(devCfg: DeviceConfig, meta: DeviceMeta, deps: EditorDeps): HTMLElement {
@@ -26,14 +45,7 @@ export function buildConfigEditor(devCfg: DeviceConfig, meta: DeviceMeta, deps: 
         let input: HTMLSelectElement | HTMLInputElement;
         if (field.type === 'pin') {
             const sel = document.createElement('select');
-            for (const p of deps.validPins) {
-                const opt = document.createElement('option');
-                opt.value = String(p);
-                opt.textContent = `GPIO ${p}` + (used.has(p) ? ' (in use)' : '');
-                sel.appendChild(opt);
-            }
-            sel.value = String(devCfg[field.key]);
-            if (sel.selectedIndex < 0 && sel.options.length) sel.value = sel.options[0].value;
+            fillPinOptions(sel, deps.validPins, used, devCfg[field.key]);
             input = sel;
         } else if (field.type === 'checkbox') {
             const cb = document.createElement('input');
@@ -76,4 +88,40 @@ export function buildConfigEditor(devCfg: DeviceConfig, meta: DeviceMeta, deps: 
         editor.appendChild(row);
     }
     return editor;
+}
+
+/** Compact row summary derived from the schema (pure, unit-tested). */
+export interface RowChips {
+    /** Schema key of the GPIO pin field, if the device has one. */
+    pinKey: string | null;
+    /** Current pin number (null if absent/invalid). */
+    pin: number | null;
+    /** Schema key of the checkbox shown as the V/G pull badge, if any. */
+    pullKey: string | null;
+    /** 'V' = idle pulled up to VCC, 'G' = idle pulled down to GND. */
+    pullChar: 'V' | 'G' | null;
+}
+
+/**
+ * Which config values a device row shows inline: the first `pin` field and
+ * the checkbox marked `chip:'pull'` (V when checked pulls high, unless the
+ * schema says `pullWhenChecked:'low'`).
+ */
+export function rowChips(meta: DeviceMeta, cfg: DeviceConfig): RowChips {
+    const fields: ConfigField[] = meta.configSchema || [];
+    const pinField = fields.find((f) => f.type === 'pin') || null;
+    const pullField = fields.find((f) => f.chip === 'pull' && f.type === 'checkbox') || null;
+    const pinKey = pinField?.key ?? null;
+    let pin: number | null = null;
+    if (pinKey != null) {
+        const n = Number(cfg[pinKey]);
+        if (Number.isFinite(n)) pin = n;
+    }
+    let pullChar: 'V' | 'G' | null = null;
+    if (pullField) {
+        const highWhenChecked = pullField.pullWhenChecked !== 'low';
+        const checked = !!cfg[pullField.key];
+        pullChar = checked === highWhenChecked ? 'V' : 'G';
+    }
+    return { pinKey, pin, pullKey: pullField?.key ?? null, pullChar };
 }

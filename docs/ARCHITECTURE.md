@@ -5,11 +5,13 @@
 ```
 ┌───────────────────────────────── 页面(page)─────────────────────────────────┐
 │ esp-emu-peris.html   上游样式原块(便于升级 diff)+ <link peris/peris.css>    │
+│ 三栏同屏:UART0 控制台 │ 外设面板 │ Debug(0.3.0 起不再标签切换)              │
 │ build/ui/*  (TypeScript 编译产物)                                           │
 │   app.ts          编排器:机器状态、Run/Pause/固件/网络控件、消息路由          │
 │   worker-client   Worker 唯一入口(其它模块一律经由它收发消息)               │
 │   terminal / chart / debug-panels     UART 控制台 / 性能图 / Debug 只读面板  │
-│   peris-panel + config-editor         Peripherals 面板与通用配置编辑器      │
+│   peris-panel + config-editor         行式外设列表(图标/名称/GPIO/V·G 徽章  │
+│                                        + 展开/删除/拖动)与详情配置编辑器     │
 └───────────────▲───────────────────────────────────────────────▲────────────┘
         postMessage(协议见 core/protocol.ts)                     │ DOM
 ┌───────────────┴───────────────────────────────────────────────▼────────────┐
@@ -80,9 +82,11 @@ npm run serve               # python serve.py(合并服务仓库与 www/pkg)
 npm run sync                # 发布进官方 www(先 build)
 ```
 
-测试分层:**单元**(纯逻辑:位运算/电平语义/校验——快、定位准)→ **集成**(真实
-wasm+固件全链路)→ **GUI**(手动清单:页面加载、加设备、载固件、Run 后 LED 翻转、
-配置导入导出往返;浏览器自动化待网络环境允许时引入 Playwright,
+测试分层:**单元**(纯逻辑:位运算/电平语义/校验/行式徽章推导——快、定位准)→
+**集成**(真实 wasm+固件全链路)→ **GUI**(手动清单:页面加载、三栏同屏可见、加设备
+后行式渲染、行内改名/改 GPIO/翻 V·G、行内图标交互(点灯换色/按压/开关)、展开详情
+与配置编辑、拖动排序、载固件、Run 后 LED 翻转、配置导入导出往返;浏览器自动化待
+网络环境允许时引入 Playwright,
 `PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright`)。
 
 ## 6. 升级流程(摘要,详见 UPGRADE.md)

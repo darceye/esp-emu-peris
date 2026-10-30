@@ -10,15 +10,19 @@ import { Device as ButtonDevice } from './button.js';
 
 export class Device extends ButtonDevice {
     static typeId = 'touch-button';
-    static version = '1.0.0';
+    static version = '1.1.0';
     static title = 'Touch button';
     static category = 'basic';
     static description = 'Touch-style pad driving a GPIO input (touch peripheral itself is not emulated — firmware must read it as GPIO).';
     static defaultConfig = { name: 'Touch', pin: 10, activeLow: true };
     static pins(cfg) { return [cfg.pin]; }
-    static configSchema = ButtonDevice.configSchema;
+    static configSchema = ButtonDevice.configSchema; // includes the V/G pull chip
     // idleLevel/pressedLevel inherited from button.js (verified levels).
 }
+
+const TOUCH_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+    <path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11m0-2.5a1.5 1.5 0 0 1 3 0V11m0-1a1.5 1.5 0 0 1 3 0v4c0 3.9-2.6 6.5-6 6.5s-5.2-1.4-6.6-3.8l-1.8-3.1a1.6 1.6 0 0 1 2.7-1.7L8 13V6.5"/>
+</svg>`;
 
 export class View {
     constructor(el, sendCmd) {
@@ -28,9 +32,7 @@ export class View {
         pad.className = 'touch-pad';
         pad.setAttribute('role', 'button');
         pad.tabIndex = 0;
-        pad.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
-            <path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11m0-2.5a1.5 1.5 0 0 1 3 0V11m0-1a1.5 1.5 0 0 1 3 0v4c0 3.9-2.6 6.5-6 6.5s-5.2-1.4-6.6-3.8l-1.8-3.1a1.6 1.6 0 0 1 2.7-1.7L8 13V6.5"/>
-        </svg><span class="touch-label">TOUCH</span>`;
+        pad.innerHTML = `${TOUCH_SVG}<span class="touch-label">TOUCH</span>`;
         const down = (e) => { e.preventDefault(); sendCmd('press'); pad.classList.add('active'); };
         const up = (e) => { if (e) e.preventDefault(); sendCmd('release'); pad.classList.remove('active'); };
         pad.addEventListener('pointerdown', down);
@@ -41,7 +43,27 @@ export class View {
         this.pad = pad;
         el.appendChild(pad);
     }
+
+    /* Compact row icon: press-and-hold fingertip. */
+    rowIcon(el) {
+        el.title = 'Touch — press and hold';
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'icon-touch';
+        b.innerHTML = TOUCH_SVG;
+        const down = (e) => { e.preventDefault(); this.send('press'); b.classList.add('down'); };
+        const up = (e) => { if (e) e.preventDefault(); this.send('release'); b.classList.remove('down'); };
+        b.addEventListener('pointerdown', down);
+        b.addEventListener('pointerup', up);
+        b.addEventListener('pointerleave', up);
+        b.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') down(e); });
+        b.addEventListener('keyup', up);
+        el.appendChild(b);
+        this.iconBtn = b;
+    }
+
     render(state) {
         this.pad.classList.toggle('active', !!state.pressed);
+        if (this.iconBtn) this.iconBtn.classList.toggle('down', !!state.pressed);
     }
 }

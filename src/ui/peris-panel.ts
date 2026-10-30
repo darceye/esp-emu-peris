@@ -1,16 +1,19 @@
 /*
- * Peripherals panel: device cards with config editors, add/remove,
- * wiring-config import/export + localStorage autosave, tab switching and
- * the peris_* message handlers (peris_ready / peris_state / peris_log).
+ * Peripherals panel: one compact row per device (interactive icon · name ·
+ * GPIO chip · V/G pull badge, right-aligned expand/remove/drag) with an
+ * expandable details area holding the device View body and the generic
+ * config editor. Also owns add/remove, drag-sort, wiring-config
+ * import/export + localStorage autosave and the peris_* message handlers
+ * (peris_ready / peris_state / peris_log).
  */
 import { loadRegistry } from '../core/registry.js';
 import type { Registry } from '../core/registry.js';
 import { normaliseConfig } from '../core/types.js';
-import type { DeviceConfig, PerisConfig, ViewClass, ViewLike } from '../core/types.js';
+import type { DeviceConfig, PerisConfig, ViewClass, ViewHost, ViewLike } from '../core/types.js';
 import { PERIS_API_VERSION, PERIS_CONFIG, PERIS_COMMAND, PERIS_READY, PERIS_STATE, PERIS_LOG } from '../core/protocol.js';
 import type { PerisEvent } from '../core/protocol.js';
 import { validPins } from '../core/chips.js';
-import { buildConfigEditor } from './config-editor.js';
+import { buildConfigEditor, fillPinOptions, rowChips } from './config-editor.js';
 import type { TerminalView } from './terminal.js';
 
 const STORAGE_KEY = 'peris.config.v1';
@@ -21,19 +24,25 @@ export interface PerisPanelDeps {
     terminal: TerminalView;
 }
 
+interface RowEntry { row: HTMLElement; view: ViewLike | null; }
+
 export class PerisPanel {
     private registry: Registry | null = null;
     private config: PerisConfig = { perisVersion: PERIS_API_VERSION, devices: [] };
-    private views = new Map<string, { card: HTMLElement; view: ViewLike | null }>();
+    private views = new Map<string, RowEntry>();
+    private expanded = new Set<string>();
+    private dragRow: HTMLElement | null = null;
     private idSeq = 0;
+    /** Chip the detail editors were built for (refreshForChip rebuilds on change). */
+    private editorChip = '';
 
     constructor(private deps: PerisPanelDeps) {
         this.wireToolbar();
-        this.wireTabs();
+        this.wireDrag();
         this.restore();
     }
 
-    /** Load the device registry, render toolbar + cards, apply to worker. */
+    /** Load the device registry, render toolbar + rows, apply to worker. */
     async init() {
         const reg = await loadRegistry();
         this.registry = reg;
@@ -43,7 +52,7 @@ export class PerisPanel {
         this.renderToolbar();
         this.renderAll();
         this.deps.terminal.writeln(
-            `\x1b[32m[Peris] ${reg.types().length} device type(s) ready — add peripherals in the Peripherals tab.\x1b[0m`);
+            `\x1b[32m[Peris] ${reg.types().length} device type(s) ready — add peripherals in the Peripherals panel.\x1b[0m`);
     }
 
     // ---- worker message handling ----
@@ -76,6 +85,7 @@ export class PerisPanel {
 
     /** Re-apply the config after the worker loaded a fresh emulator. */
     reapplyOnLoad() {
+        this.refreshForChip();
         this.apply();
     }
 
@@ -101,7 +111,7 @@ export class PerisPanel {
         } catch { /* ignore */ }
     }
 
-    // ---- cards ----
+    // ---- rows ----
 
     private usedPins(exceptId: string): Set<number> {
         const used = new Set<number>();
@@ -143,66 +153,229 @@ export class PerisPanel {
         }
     }
 
-    private buildDeviceCard(devCfg: DeviceConfig): { card: HTMLElement; view: ViewLike | null } | null {
+    private buildDeviceRow(devCfg: DeviceConfig): RowEntry | null {
         const meta = this.registry?.meta(devCfg.type);
         if (!meta) return null;
-        const card = document.createElement('div');
-        card.className = 'peris-card';
-        card.dataset.id = devCfg.id;
+        const row = document.createElement('div');
+        row.className = 'peris-row' + (this.expanded.has(devCfg.id) ? ' open' : '');
+        row.dataset.id = devCfg.id;
 
-        // header: title, type tag (with plugin version), remove
-        const ver = meta.version ? ` v${meta.version}` : '';
-        const head = document.createElement('div');
-        head.className = 'peris-card-head';
-        head.innerHTML = `<span class="dev-title"></span><span class="dev-type">${meta.title} · ${devCfg.type}${ver}</span>`;
-        const remove = document.createElement('button');
-        remove.className = 'btn small dev-remove';
-        remove.title = 'Remove device';
-        remove.textContent = '×';
-        head.appendChild(remove);
-        card.appendChild(head);
+        // ---- the one-line main row ----
+        const main = document.createElement('div');
+        main.className = 'peris-row-main';
 
-        // body: the device's own View
-        const body = document.createElement('div');
-        card.appendChild(body);
-        const ViewClass: ViewClass | undefined = this.registry?.View(devCfg.type);
-        let view: ViewLike | null = null;
-        if (ViewClass) {
-            view = new ViewClass(body, (cmd, params) =>
-                this.deps.send({ type: PERIS_COMMAND, id: devCfg.id, cmd, params }));
-            view.setConfig?.(devCfg);
+        const icon = document.createElement('span');
+        icon.className = 'dev-icon';
+        main.appendChild(icon);
+
+        const nameSlot = document.createElement('span');
+        nameSlot.className = 'dev-name-slot';
+        main.appendChild(nameSlot);
+
+        const chips = rowChips(meta, devCfg);
+        if (chips.pinKey != null) {
+            const pinSlot = document.createElement('span');
+            pinSlot.className = 'dev-chip-slot';
+            main.appendChild(pinSlot);
+        }
+        if (chips.pullKey != null) {
+            const pullBtn = document.createElement('button');
+            pullBtn.type = 'button';
+            pullBtn.className = 'dev-chip dev-chip-pull';
+            pullBtn.title = 'Idle pull level — click to flip (V = pull-up to VCC, G = pull-down to GND)';
+            pullBtn.addEventListener('click', () => {
+                devCfg[chips.pullKey!] = !devCfg[chips.pullKey!];
+                this.apply();
+                this.views.get(devCfg.id)?.view?.setConfig?.(devCfg);
+                this.renderRows();
+            });
+            main.appendChild(pullBtn);
         }
 
-        // config editor
+        const spacer = document.createElement('span');
+        spacer.className = 'row-spacer';
+        main.appendChild(spacer);
+
+        const expand = document.createElement('button');
+        expand.type = 'button';
+        expand.className = 'row-btn row-expand';
+        expand.title = 'Show / hide details';
+        expand.innerHTML = `<svg viewBox="0 0 10 10" width="10" height="10"><path d="M3 1l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+        expand.addEventListener('click', () => {
+            const open = row.classList.toggle('open');
+            if (open) this.expanded.add(devCfg.id);
+            else this.expanded.delete(devCfg.id);
+        });
+        main.appendChild(expand);
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'row-btn row-remove';
+        remove.title = 'Remove device';
+        remove.textContent = '×';
+        remove.addEventListener('click', () => {
+            this.config.devices = this.config.devices.filter((d) => d.id !== devCfg.id);
+            this.views.delete(devCfg.id);
+            this.expanded.delete(devCfg.id);
+            row.remove();
+            this.apply();
+            this.renderEmpty();
+        });
+        main.appendChild(remove);
+
+        const grip = document.createElement('span');
+        grip.className = 'row-grip';
+        grip.title = 'Drag to reorder';
+        grip.textContent = '⠿';
+        // Dragging is armed only while the grip is held, so clicks on the
+        // other controls never start a drag.
+        grip.addEventListener('pointerdown', () => { row.draggable = true; });
+        row.addEventListener('pointerup', () => { row.draggable = false; });
+        row.addEventListener('dragstart', (e) => {
+            this.dragRow = row;
+            row.classList.add('dragging');
+            if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', devCfg.id);
+            }
+        });
+        row.addEventListener('dragend', () => {
+            row.draggable = false;
+            row.classList.remove('dragging');
+            this.dragRow = null;
+            this.commitOrder();
+        });
+        main.appendChild(grip);
+        row.appendChild(main);
+
+        // ---- expandable details: the device's own View + config editor ----
+        const details = document.createElement('div');
+        details.className = 'peris-details';
+        const bodyWrap = document.createElement('div');
+        bodyWrap.className = 'dev-body-wrap';
+        const body = document.createElement('div');
+        bodyWrap.appendChild(body);
+        details.appendChild(bodyWrap);
+
+        let view: ViewLike | null = null;
+        const host: ViewHost = {
+            updateConfig: (patch) => {
+                Object.assign(devCfg, patch);
+                this.apply();
+                view?.setConfig?.(devCfg);
+                this.renderRows();
+            },
+        };
+        const ViewClass: ViewClass | undefined = this.registry?.View(devCfg.type);
+        if (ViewClass) {
+            view = new ViewClass(body, (cmd, params) =>
+                this.deps.send({ type: PERIS_COMMAND, id: devCfg.id, cmd, params }), host);
+            // rowIcon first, then setConfig: the icon exists when config
+            // styling is applied, so both visuals stay in lock-step.
+            view.rowIcon?.(icon);
+            view.setConfig?.(devCfg);
+        } else {
+            icon.classList.add('dev-icon-plain');
+            icon.title = meta.title;
+            icon.textContent = meta.title.charAt(0).toUpperCase();
+        }
+
+        row.appendChild(details);
+        this.attachEditor(row, devCfg, view); // after details is attached
+
+        document.getElementById('peris-cards')!.appendChild(row);
+        const entry: RowEntry = { row, view };
+        this.views.set(devCfg.id, entry);
+        this.updateRow(row, devCfg);
+        return entry;
+    }
+
+    /**
+     * (Re)build the details config editor for a row. Pin options snapshot
+     * the chip at build time, so this is also how a chip change reaches
+     * the editors — see refreshForChip().
+     */
+    private attachEditor(row: HTMLElement, devCfg: DeviceConfig, view: ViewLike | null) {
+        const meta = this.registry?.meta(devCfg.type);
+        const details = row.querySelector('.peris-details');
+        if (!meta || !details) return;
+        details.querySelector('.dev-editor')?.remove();
         const editor = buildConfigEditor(devCfg, meta, {
             validPins: validPins(this.deps.getChip()),
             usedPins: (id) => this.usedPins(id),
             onChange: () => {
                 this.apply();
                 view?.setConfig?.(devCfg);
-                this.renderTitles();
+                this.renderRows();
             },
         });
-        card.appendChild(editor);
-
-        remove.addEventListener('click', () => {
-            this.config.devices = this.config.devices.filter((d) => d.id !== devCfg.id);
-            this.views.delete(devCfg.id);
-            card.remove();
-            this.apply();
-            this.renderEmpty();
-        });
-
-        document.getElementById('peris-cards')!.appendChild(card);
-        const entry = { card, view };
-        this.views.set(devCfg.id, entry);
-        return entry;
+        details.appendChild(editor);
     }
 
-    private renderTitles() {
+    /**
+     * Rebuild the detail editors when the active chip changed (loading
+     * firmware for another chip after devices were added). The row's inline
+     * pin chip already asks the chip live; the editors must be rebuilt.
+     */
+    refreshForChip() {
+        const chip = this.deps.getChip();
+        if (chip === this.editorChip) return;
+        this.editorChip = chip;
+        for (const d of this.config.devices) {
+            const entry = this.views.get(d.id);
+            if (entry) this.attachEditor(entry.row, d, entry.view);
+        }
+    }
+
+    /** Refresh one row's inline name/pin/pull chips. Slots currently holding
+     * an inline editor (input/select) are skipped; a slot emptied by a
+     * finished editor gets its button rebuilt here.
+     */
+    private updateRow(row: HTMLElement, devCfg: DeviceConfig) {
+        const meta = this.registry?.meta(devCfg.type);
+        if (!meta) return;
+        const chips = rowChips(meta, devCfg);
+
+        const nameSlot = row.querySelector<HTMLElement>('.dev-name-slot');
+        if (nameSlot && !nameSlot.querySelector('input')) {
+            let btn = nameSlot.querySelector<HTMLButtonElement>('.dev-name');
+            if (!btn) {
+                btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'dev-name';
+                btn.title = 'Rename';
+                btn.addEventListener('click', () => this.editName(nameSlot, devCfg));
+                nameSlot.replaceChildren(btn);
+            }
+            btn.textContent = String(devCfg.name ?? devCfg.type);
+        }
+
+        const pinSlot = row.querySelector<HTMLElement>('.dev-chip-slot');
+        if (pinSlot && !pinSlot.querySelector('select')) {
+            let btn = pinSlot.querySelector<HTMLButtonElement>('.dev-chip-pin');
+            if (!btn) {
+                btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'dev-chip dev-chip-pin';
+                btn.title = 'GPIO pin — click to change';
+                btn.addEventListener('click', () => this.editPin(pinSlot, devCfg, chips.pinKey!));
+                pinSlot.replaceChildren(btn);
+            }
+            btn.textContent = chips.pin != null ? String(chips.pin) : '–';
+        }
+
+        const pull = row.querySelector('.dev-chip-pull');
+        if (pull) {
+            pull.textContent = chips.pullChar ?? '–';
+            pull.classList.toggle('v', chips.pullChar === 'V');
+            pull.classList.toggle('g', chips.pullChar === 'G');
+        }
+    }
+
+    private renderRows() {
         for (const d of this.config.devices) {
             const v = this.views.get(d.id);
-            if (v) v.card.querySelector('.dev-title')!.textContent = String(d.name ?? d.type);
+            if (v) this.updateRow(v.row, d);
         }
     }
 
@@ -219,10 +392,11 @@ export class PerisPanel {
             const meta = this.registry?.meta(devCfg.type);
             if (!meta) continue;
             Object.assign(devCfg, normaliseConfig(meta, devCfg)); // drop unknown keys
-            this.buildDeviceCard(devCfg);
+            this.buildDeviceRow(devCfg);
         }
-        this.renderTitles();
+        this.renderRows();
         this.renderEmpty();
+        this.editorChip = this.deps.getChip();
         this.apply();
     }
 
@@ -236,11 +410,100 @@ export class PerisPanel {
         const pinField = (meta.configSchema || []).find((f) => f.type === 'pin');
         if (pinField) (cfg as Record<string, unknown>)[pinField.key] = this.freePin(cfg[pinField.key] as number | undefined);
         this.config.devices.push(cfg);
-        this.buildDeviceCard(cfg);
-        this.renderTitles();
+        this.expanded.add(id);
+        this.buildDeviceRow(cfg);
+        this.renderRows();
         this.renderEmpty();
         this.apply();
-        this.views.get(id)?.card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        this.views.get(id)?.row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // ---- inline row editors ----
+
+    private editName(slot: HTMLElement, devCfg: DeviceConfig) {
+        if (slot.querySelector('input')) return;
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'dev-name-input';
+        input.value = String(devCfg.name ?? devCfg.type);
+        input.addEventListener('keydown', (e) => {
+            e.stopPropagation();
+            if (e.key === 'Enter') input.blur();
+            else if (e.key === 'Escape') {
+                input.value = String(devCfg.name ?? devCfg.type);
+                input.blur();
+            }
+        });
+        input.addEventListener('blur', () => {
+            const v = input.value.trim();
+            slot.replaceChildren(); // close the editor; updateRow rebuilds the button
+            if (v && v !== devCfg.name) {
+                devCfg.name = v;
+                this.apply();
+                this.views.get(devCfg.id)?.view?.setConfig?.(devCfg);
+            }
+            this.renderRows();
+        });
+        slot.replaceChildren(input);
+        input.focus();
+        input.select();
+    }
+
+    private editPin(slot: HTMLElement, devCfg: DeviceConfig, key: string) {
+        if (slot.querySelector('select')) return;
+        const sel = document.createElement('select');
+        sel.className = 'dev-chip-select';
+        // same option source as the details editor — never fork this
+        fillPinOptions(sel, validPins(this.deps.getChip()), this.usedPins(devCfg.id), devCfg[key]);
+        sel.addEventListener('change', () => {
+            devCfg[key] = Number(sel.value);
+            slot.replaceChildren(); // commit closes the editor
+            this.apply();
+            this.views.get(devCfg.id)?.view?.setConfig?.(devCfg);
+            this.renderRows();
+        });
+        sel.addEventListener('blur', () => {
+            if (!slot.contains(sel)) return; // already committed
+            slot.replaceChildren(); // cancel closes the editor
+            this.renderRows();
+        });
+        sel.addEventListener('keydown', (e) => {
+            e.stopPropagation();
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                slot.replaceChildren();
+                this.renderRows();
+            }
+        });
+        slot.replaceChildren(sel);
+        sel.focus();
+    }
+
+    // ---- drag sorting ----
+
+    private wireDrag() {
+        const cards = document.getElementById('peris-cards')!;
+        cards.addEventListener('dragover', (e) => {
+            if (!this.dragRow) return;
+            e.preventDefault();
+            const rows = Array.from(cards.querySelectorAll('.peris-row'))
+                .filter((r) => r !== this.dragRow) as HTMLElement[];
+            const after = rows.find((r) => {
+                const b = r.getBoundingClientRect();
+                return e.clientY < b.top + b.height / 2;
+            });
+            if (after) cards.insertBefore(this.dragRow, after);
+            else cards.appendChild(this.dragRow);
+        });
+    }
+
+    /** Reorder the config from the DOM order (device set unchanged → no worker rebuild). */
+    private commitOrder() {
+        const cards = document.getElementById('peris-cards')!;
+        const ids = Array.from(cards.querySelectorAll('.peris-row'))
+            .map((el) => (el as HTMLElement).dataset.id!);
+        this.config.devices.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+        this.persist();
     }
 
     // ---- import / export ----
@@ -282,7 +545,7 @@ export class PerisPanel {
         reader.readAsText(file);
     }
 
-    // ---- toolbar / tabs wiring ----
+    // ---- toolbar wiring ----
 
     private wireToolbar() {
         document.getElementById('peris-add-btn')!.addEventListener('click', () => {
@@ -297,9 +560,15 @@ export class PerisPanel {
             if (f) this.importCfg(f);
             (e.target as HTMLInputElement).value = '';
         });
-        // Config files are also drop targets.
+        // Config files are also drop targets (ignore internal row sorting,
+        // which carries text/plain rather than files).
         const pane = document.getElementById('pane-peris')!;
-        pane.addEventListener('dragover', (e) => { e.preventDefault(); pane.classList.add('over'); });
+        const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
+        pane.addEventListener('dragover', (e) => {
+            if (!hasFiles(e)) return;
+            e.preventDefault();
+            pane.classList.add('over');
+        });
         pane.addEventListener('dragleave', () => pane.classList.remove('over'));
         pane.addEventListener('drop', (e) => {
             e.preventDefault();
@@ -307,22 +576,5 @@ export class PerisPanel {
             const f = e.dataTransfer?.files?.[0];
             if (f && f.name.endsWith('.json')) this.importCfg(f);
         });
-    }
-
-    private wireTabs() {
-        const tabs = document.querySelectorAll('.ptab');
-        const panes: Record<string, HTMLElement> = {
-            peris: document.getElementById('pane-peris')!,
-            debug: document.getElementById('pane-debug')!,
-        };
-        for (const tab of Array.from(tabs)) {
-            (tab as HTMLElement).addEventListener('click', () => {
-                for (const t of Array.from(tabs)) t.classList.toggle('active', t === tab);
-                const name = (tab as HTMLElement).dataset.pane!;
-                for (const [key, pane] of Object.entries(panes)) {
-                    pane.classList.toggle('hidden', key !== name);
-                }
-            });
-        }
     }
 }

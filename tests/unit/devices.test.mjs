@@ -1,7 +1,8 @@
 /*
  * Unit tests for the built-in device plugins (worker side, no emulator):
  * electrical semantics — button idle/pressed levels (an inverted activeLow
- * was a real M1 bug), LED onPinState mapping, toggle switch driving.
+ * was a real M1 bug), LED onPinState mapping, toggle switch driving —
+ * plus the row-UI contract (rowIcon, V/G pull chips).
  * Run: node --test tests/unit/
  */
 import { test } from 'node:test';
@@ -9,7 +10,9 @@ import assert from 'node:assert/strict';
 import * as led from '../../peris/devices/led.js';
 import * as button from '../../peris/devices/button.js';
 import * as toggle from '../../peris/devices/toggle-switch.js';
+import * as touch from '../../peris/devices/touch-button.js';
 import { validateDeviceModule } from '../../build/core/types.js';
+import { rowChips } from '../../build/ui/config-editor.js';
 
 /** Recording stub for the runtime ctx handed to device constructors. */
 function makeCtx() {
@@ -31,9 +34,54 @@ function makeCtx() {
 }
 
 test('all device modules pass meta validation', () => {
-    for (const mod of [led, button, toggle]) {
+    for (const mod of [led, button, toggle, touch]) {
         assert.equal(validateDeviceModule(mod), null, mod.Device.typeId);
     }
+});
+
+test('all built-in Views implement the row icon API', () => {
+    for (const mod of [led, button, toggle, touch]) {
+        assert.equal(typeof mod.View.prototype.rowIcon, 'function', mod.Device.typeId);
+    }
+});
+
+test('rowChips: GPIO number + V/G pull char from schema chip flags', () => {
+    // input devices: activeLow checked → idle pulled up to VCC ('V')
+    const c1 = rowChips(button.Device, { id: 'b', type: 'button', pin: 3, activeLow: true });
+    assert.equal(c1.pinKey, 'pin');
+    assert.equal(c1.pin, 3);
+    assert.equal(c1.pullKey, 'activeLow');
+    assert.equal(c1.pullChar, 'V');
+    const c2 = rowChips(button.Device, { id: 'b', type: 'button', pin: 4, activeLow: false });
+    assert.equal(c2.pullChar, 'G');
+    assert.equal(c2.pin, 4);
+
+    // touch-button inherits button's schema, so it carries the chip too
+    assert.equal(rowChips(touch.Device, { pin: 10, activeLow: true }).pullChar, 'V');
+
+    // output device: pin chip only, no pull badge
+    const c3 = rowChips(led.Device, { id: 'l', type: 'led', pin: 8 });
+    assert.equal(c3.pin, 8);
+    assert.equal(c3.pullKey, null);
+    assert.equal(c3.pullChar, null);
+
+    // GPIO 0 is a valid pin value (must not be falsy-dropped)
+    assert.equal(rowChips(led.Device, { pin: 0 }).pin, 0);
+
+    // pullWhenChecked:'low' inverts the badge mapping
+    const inv = {
+        ...toggle.Device,
+        configSchema: [
+            { key: 'pin', label: 'GPIO pin', type: 'pin' },
+            { key: 'activeHigh', label: 'Active high', type: 'checkbox', chip: 'pull', pullWhenChecked: 'low' },
+        ],
+    };
+    assert.equal(rowChips(inv, { pin: 2, activeHigh: true }).pullChar, 'G');
+    assert.equal(rowChips(inv, { pin: 2, activeHigh: false }).pullChar, 'V');
+
+    // schema without a pin field → no pin chip
+    const noPin = { ...led.Device, configSchema: [{ key: 'name', label: 'Label', type: 'text' }] };
+    assert.equal(rowChips(noPin, { name: 'x' }).pinKey, null);
 });
 
 test('button active-low: idle HIGH, pressed LOW (pull-up wiring)', () => {

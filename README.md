@@ -3,7 +3,7 @@
 为乐鑫 [esp-emulator](https://github.com/espressif/esp-emulator) 浏览器形态(wasm)做的**模拟外设面板**:LED、按键、触摸按键、拨动开关……以插件方式不断添加,不需要改动官方 `www/` 里的任何基础文件。
 
 ```
-esp-emu-peris.html      入口页面(UART0 控制台 + 右侧 Peripherals/Debug 双标签)
+esp-emu-peris.html      入口页面(UART0 控制台 | 外设行式面板 | Debug,三栏同屏)
 src/                    TypeScript 源码(npm run build → build/)
   core/                 worker 侧框架:version/types/protocol/chips/mmio/sigbus/registry/runtime/worker
   ui/                   页面侧模块:app/worker-client/terminal/chart/debug-panels/peris-panel/config-editor
@@ -37,8 +37,10 @@ npm run serve               # http://127.0.0.1:8080/esp-emu-peris.html
 # 浏览器打开上面的地址,选择芯片、拖入 merged flash image(.bin)
 # 注意:必须是 idf.py merge-bin 生成的完整镜像,裸 app bin 无法启动
 
-# 右侧 Peripherals 标签:Add 添加 LED/按键等,选好 GPIO;
-# Export/Import 导出/导入接线配置(JSON,自动存 localStorage)
+# 外设栏(控制台右侧):Add 添加 LED/按键等;每外设一行——行内图标可交互
+# (LED 点击换色/按键按压),名称、GPIO 方框、V/G 电平徽章点击即改,
+# ▸ 展开详情与高级配置,⠿ 拖动排序;Export/Import 导出/导入接线配置
+# (JSON,自动存 localStorage)
 ```
 
 把外设面板**发布**进官方 www 目录(只增不改;先 build):
