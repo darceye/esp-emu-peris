@@ -110,15 +110,21 @@ npm run sync                # publish into the official www (build first)
 ```
 
 Test layering: **unit** (pure logic: bit math / level semantics / validation /
-row-badge derivation / LEDC register decode against fake MMIO — fast, pinpoints
-failures) → **integration** (real wasm + firmware, full chain; S7/S8 drive by
-the `###P2` markers) → **GUI** (manual checklist: page load, three panes
+row-badge derivation / LEDC register decode against fake MMIO, plus the M4
+protocol layer — scheduler leases, the I2C slave engine under a synthetic
+open-drain master, register models, NEC decode — fast, pinpoints failures) →
+**integration** (real wasm + firmware, full chain; S7/S8 drive by the `###P2`
+markers, S9 by `###P3`, S10/S11 — soft-I2C slaves + both NEC capture paths —
+by `###P4`; every window is marker-bounded because armed batches fast-forward
+whole sleep phases) → **GUI** (manual checklist: page load, three panes
 visible at once, row rendering after adding a device, inline rename / GPIO
 change / V·G flip, row-icon interactions (LED colour / press / switch), expand
 details & config editing, drag sorting, firmware load, LED toggling while
 running, PWM/RGB LED auto-binding to the firmware's LEDC channels with smooth
-breathing during the P2 phase, config import/export round-trip; browser
-automation to be introduced with Playwright once the network allows —
+breathing during the P2 phase, the I2C transaction log filling during P4 with
+the EEPROM hex dump editable from the View, IR codes appearing on both
+ir-nec rows, config import/export round-trip; browser automation to be
+introduced with Playwright once the network allows —
 `PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright`).
 
 ## 6. Upgrade procedure (summary; details in UPGRADE.md)

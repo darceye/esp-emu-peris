@@ -2,18 +2,56 @@
 
 # Roadmap
 
-## M3 · WS2812 addressable LEDs (next)
+## M4 · Bit-bang protocol devices + IR — shipped in peris 0.8.0
 
-- `ws2812.js`: poll the RMT channel RAM (M0 verified Q3b PASS),
-  symbols → bitstream → GRB frames; ping-pong grouping + reset-symbol
-  resync + leading-zero alignment (details in FEASIBILITY.md).
-- Strip / ring / matrix Views; GRB/RGB order, brightness cap and gamma
+- ✅ `bitbang-i2c-slave.js`: 24C02 EEPROM and BME280 models behind two
+  firmware bit-banged GPIOs (SCL/SDA). Level-driven engine (open-drain
+  model); the slave answers on the SDA input path, which the master sees
+  while it releases the pad. Shared logic in `peris/devices/i2c-lib.js`
+  (engine, register models, bit-exact Bosch compensation). Constraint
+  documented: hardware I2C/SPI buses cannot be tapped (M0) and push-pull
+  masters that never release SDA cannot be answered; clock stretching not
+  modelled.
+- ✅ `ir-nec.js`: NEC codes captured from firmware **bit-bang** transmissions
+  (fine-batch edge sampling → burst envelope) and from **RMT** channels
+  (a 34-word frame fits the post-TX channel RAM; the emulator leaves
+  `APB_MEM_WADDR` at 0, so mid-TX stitching is out — M4 probe). Decoder is
+  fully ratio-based: the guest clock runs ~50% of nominal through
+  `esp_rom_delay_us` (measured), so absolute-µs windows would misjudge.
+  Shared logic in `peris/devices/nec-lib.js`.
+- ✅ High-rate sampling scheduler (`src/core/scheduler.ts`): per-device
+  leases — a standing arm batch (~1000 instr) while the bus is idle, fine
+  batches (~300 instr) while a transfer is in flight; leases expire on
+  deadline or CPU-sleep fast-forward. Worker and tests share
+  `runtime.batchSize()`.
+- ✅ Framework: `sharedBus` device metadata (I2C slaves legally share
+  SCL/SDA) with wired-AND input arbitration; `cyclesPerUs` on the device
+  ctx.
+- Test firmware P4 (soft-I2C master at ~20 kHz, forced BME280 measurements
+  with C-side compensation cross-checked bit-exactly by the smoke test,
+  NEC via both paths) + unit tests `tests/unit/protocol.test.mjs` +
+  smoke S10/S11.
+
+## M3 · WS2812 addressable LEDs — shipped in peris 0.7.0
+
+- ✅ `ws2812.js`: polls the RMT channel RAM (M0 verified Q3b PASS),
+  symbols → bitstream → GRB frames; reset-symbol resync + leading-zero
+  alignment (the M3 probe refined the model: one RMT word per WS2812 bit,
+  48-word wrap, a zero transmit terminator after the reset — details in
+  FEASIBILITY.md). Shared logic in `peris/devices/ws2812-lib.js`.
+- ✅ Strip / ring / matrix Views; GRB/RGB order, brightness cap and gamma
   configurable; smooth frame interpolation like the M2 PWM bulbs
-  (reuse the `ledc-lib.js` animator).
-- Performance strategy: JS decoding first; if measurements show it is not
-  enough, compile the hot "sample + decode" path into a separate wasm helper
-  module (C/C++) invoked from the worker (the emulator's closed-source wasm
-  stays untouched, the device JS interface unchanged).
+  (reusing the `ledc-lib.js` animator).
+- ✅ Known limitation, documented and surfaced in the UI: the 48-word
+  channel RAM keeps only the **last 46 bits** of a frame, so strips longer
+  than ~2 LEDs show only their tail (same as real C3 hardware); the View
+  draws unrecoverable LEDs hollow. `CHnSTATUS` gates decoding while a
+  transmission is in flight.
+- Performance: JS decoding measures far below any budget (one 192-byte
+  read + a 48-word compare per batch); the wasm-helper escape hatch was
+  not needed. Lifting the 46-bit limit would need the M4 fine-batch
+  scheduler (sampling the RAM repeatedly *during* a transmission), not
+  faster decoding.
 
 ## M2 · PWM dimmed LED — shipped in peris 0.6.0
 
@@ -27,16 +65,6 @@
   interpolation (one rAF animator per plugin repaints bulb + row icon).
 - Shared logic in `peris/devices/ledc-lib.js`; framework hooks
   `Device.onBatch()` + `ctx.mmio` (see DEVICE-API.md).
-
-## M4 · Bit-bang protocol devices + IR
-
-- `bitbang-i2c-slave.js` (emulating 24Cxx/BME280 etc. on SCL/SDA) and
-  `ir-nec.js` (capturing firmware RMT/bit-bang transmissions).
-- Prerequisite: firmware uses GPIO bit-banging (hardware I2C/SPI buses
-  cannot be tapped from outside — confirmed in M0). Needs accompanying test
-  firmware and documentation of this constraint.
-- High-rate sampling scheduler (sigbus extension: temporary fine-batch
-  windows, effective while the CPU is active).
 
 ## M5 · Upstream capability tracking (not under our control)
 

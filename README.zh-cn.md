@@ -13,6 +13,9 @@ build/                  编译产物(tsc,未入 git;core/ + ui/)
 peris/
   devices/              外设插件(原生 JS,丢文件即用,含各自版本号):led/button/touch-button/
                         toggle-switch + pwm-led/rgb-led(寄存器级,共享辅助在 ledc-lib.js)
+                        + ws2812(RMT 通道 RAM,ws2812-lib.js)
+                        + bitbang-i2c-slave(24C02/BME280,i2c-lib.js)+ ir-nec(NEC 接收,
+                          nec-lib.js;两者都依托 M4 细批采样调度器)
   vendor/ peris.css     xterm 本地化 + 面板样式
 examples/               接线配置示例(JSON,可直接 Import)
 tests/unit/             单元测试(node:test)
@@ -60,8 +63,9 @@ npm run sync                 # 复制入口 html + peris/(含编译产物)+ exam
 | 各色 LED | ✅ M1 | 轮询 GPIO 输出寄存器 |
 | 物理按键 / 触摸按键(GPIO 语义)/ 拨动开关 | ✅ M1 | 驱动引脚输入,固件可读到并触发中断 |
 | PWM 调光 LED / RGB LED | ✅ M2 | 读 LEDC duty 寄存器;通道→引脚接线从 GPIO 矩阵自动发现(引脚级 PWM 不可见);canvas 亮度插值呈现呼吸效果 |
-| WS2812 幻彩灯 | 🔜 M3 | 读 RMT 通道 RAM 解码(引脚级波形不可见) |
-| 位绑定 I2C/SPI 设备、IR | 🔜 M4 | 高速引脚采样(需固件位绑定) |
+| WS2812 幻彩灯 | ✅ M3 | 读 RMT 通道 RAM 解码(引脚级波形不可见);灯带/环形/矩阵 View。长灯带只能恢复尾部——48 字通道 RAM 只保留帧的最后 46 位(与真实 C3 硬件一致) |
+| 位绑定 I2C 从机(24C02 EEPROM、BME280) | ✅ M4 | 两个位绑定 GPIO(SCL/SDA)上的电平驱动协议引擎;经 SDA 输入路径应答(开漏惯用法);多个从机可共享一条总线(线与仲裁);BME280 补偿逐位精确镜像 |
+| IR NEC 接收器 | ✅ M4 | 双路捕获固件码:位绑定 GPIO(细批边沿采样)或 RMT TX 通道(通道 RAM);按比值解码(客户时钟不按墙钟走);支持重复帧 |
 | 硬件 I2C/SPI 设备、显示屏、ADC、真触摸、I2S、SD | ⏸ M5 | 等 esp-emulator 上游暴露 API |
 
 注:触摸**外设**未被模拟——触摸按键以 GPIO 输入呈现,固件按 GPIO 读取即可
@@ -106,8 +110,10 @@ npm test                     # 单元测试 + 集成冒烟(见 docs/ARCHITECTURE
 npm run test:m0              # 模拟器能力探针(上游升级时先跑)
 ```
 
-固件三阶段循环:GPIO8 闪烁 / GPIO9+GPIO6+GPIO7 上 LEDC 呼吸(ch0 渐变、
-ch1 反向、ch2 恒半占空比)/ GPIO4 RMT-WS2812 发帧,并配合 GPIO3 输入
+固件四阶段循环:GPIO8 闪烁 / GPIO9+GPIO6+GPIO7 上 LEDC 呼吸(ch0 渐变、
+ch1 反向、ch2 恒半占空比)/ GPIO4 RMT-WS2812 发帧 / SCL=GPIO1+SDA=GPIO2
+上 ~20 kHz soft-I2C 主机(24C02 + BME280 事务,BME 补偿逐位交叉验证)
+加 GPIO5 位绑定与 GPIO10 RMT ch1 两路 NEC 红外码——并配合 GPIO3 输入
 中断计数,用于端到端验证。
 
 注:页面自身不依赖任何 CDN——xterm/xterm-addon-fit 已本地化到

@@ -56,11 +56,34 @@ and `docs/FEASIBILITY.md` (M0 measurements).
   transmission). One implementation of all of this: `peris/devices/ledc-lib.js`
   — reuse, never fork. Address tables: `src/core/mmio/`; sources &
   verification: FEASIBILITY.md.
+- **RMT channel RAM (WS2812, M3-measured)**: the copy encoder writes **one
+  RMT word per WS2812 bit**; words wrap every 48; after a transmission the
+  RAM holds the reset symbol, one all-zero terminator word and **only the
+  last 46 bits** — decode the frame tail, resync on the reset (low ≥30µs)
+  and realign the LED grid with leading zeros. `CHnSTATUS` bits[11:9] ≠ 0
+  while sending (skip decoding then). C3 RMT pad signals are ch0/1 only
+  (51/52). One implementation: `peris/devices/ws2812-lib.js` — reuse, never
+  fork.
 - **Time fast-forwards during `vTaskDelay`**: pin-level waveforms inside a
   sleep window cannot be captured, regardless of sample rate.
   Waveforms of CPU-active bit-banged signals can be sampled, but **consecutive
   input flips within one batch gap lose edges** (press→release must straddle
-  batches; see m1_smoke S3).
+  batches; see m1_smoke S3). With an arm lease standing (~1000-instr batches)
+  a sleep batch jumps **~680k cycles** — a whole firmware round passes in
+  ~2.5k batches while P4's fine windows need ~166k. Never bound test windows
+  by batch counts; bound them by UART markers.
+- **Guest clock distortion (M4)**: `esp_rom_delay_us` advances emulator time
+  at ~50% of nominal (a "9 ms" leader measures 4.505 ms); `vTaskDelay` keeps
+  full duration. Decoders must be level- or ratio-based, never absolute-us
+  (see FEASIBILITY.md M4 measurements).
+- **GPIO input pulses need emulated spacing (M4)**: at armed sizes a press
+  every 8 batches held for 3 (~10-40 ms emulated) counts reliably; denser
+  pulses lose edges, and M0's instruction-count shapes no longer fit a phase.
+- **RMT `CHnSTATUS.APB_MEM_WADDR` reads 0 always** (not implemented) -
+  mid-transmission channel-RAM stitching is impossible; post-TX windows only.
+- **BME280 dig_T1/dig_P1 are uint16** (Bosch layout): 36477 in int16 silently
+  becomes negative - T/H still matched, only P diverged (that signature is
+  how the bug was found).
 - `gpio_set_input` defaults to a high level (pull-up); it reliably raises the
   firmware's GPIO interrupts.
 - After a fresh `WasmEmulator` instance the input levels reset → devices must
@@ -106,6 +129,14 @@ and `docs/FEASIBILITY.md` (M0 measurements).
    LEDC devices return `[]` from `pins()` (the wiring is firmware-side
    routing, nothing to claim); the generic editor's `<select>` hands values
    back as **strings** (`parseChannel` normalises; beware `Number(null)===0`).
+10. **Bit-bang devices ride the sampling scheduler (M4)**: `ctx.armSampling`
+   once (idle watch), `ctx.fineSampling` on every edge (renewed lease;
+   auto-expires on CPU-sleep fast-forward). Never busy-poll at fine sizes -
+   the scheduler is the only batch-size path (`runtime.batchSize()`, used by
+   the worker AND the tests). Bus devices declare `static sharedBus = true`;
+   the runtime wired-ANDs shared pads' input drives (gpio_set_input is a
+   single-winner level write - two slave engines otherwise clobber each
+   other's ACK pulls, a real M4 bug).
 
 ## 4. Past bugs (prevent regressions)
 
@@ -121,24 +152,39 @@ and `docs/FEASIBILITY.md` (M0 measurements).
 | throttle window dropped the last state | trailing flush (see §3.6) |
 | LED row-icon colour disagreed with the details bulb (0.3.0) | the panel called setConfig before rowIcon and the plugin styled the two in separate places; unified `setColour` + fixed call order (§3.8) |
 | after loading firmware for another chip, the details editor kept the old chip's GPIO options (0.3.0) | the editor snapshot `validPins` at build time; chip changes must rebuild editors, and option building goes through `fillPinOptions` (§3.8) |
+| m1 markers: `line === '###P1 end'` never matched (the firmware prints `###P1 end btn=N`), `inP1` stuck true and loops overran whole rounds (M4) | match protocol markers with `startsWith` when the firmware appends data; a stuck phase flag fails silently - bound every loop by markers |
+| two I2C slaves on one bus NACKed every transaction (M4) | `gpio_set_input` is a single-winner level write; shared-bus pads need the runtime's wired-AND arbitration (`sharedBus` metadata) |
+| read-address bytes were never ACKed by the engine (M4, unit-caught) | the ACK decision belongs to the *completed byte* (`ackThisByte`), not to the (already switched) phase |
+| C compensation diverged from the JS model only in pressure (M4) | `dig_P1` is uint16 in the Bosch layout; 36477 wraps negative in int16 - keep the C and JS implementations cross-checked bit-exactly by the smoke test |
 
 ## 5. Testing & verification conventions
 
 - **Unit tests** (node:test, zero deps): pure logic — sigbus bit math, level
   semantics, config validation, MMIO address tables, LEDC duty decode /
   wiring scan / auto-binding against **fake MMIO** (a `Map<addr, u32>` +
-  the real C3 table, see `makeMmioCtx` in tests/unit/devices.test.mjs).
+  the real C3 table, see `makeMmioCtx` in tests/unit/devices.test.mjs);
+  M4 protocol layer (scheduler leases, the I2C engine driven by a synthetic
+  open-drain master, register models, compensation pins, NEC decode, the
+  sharedBus rule) in `tests/unit/protocol.test.mjs`.
   Mandatory after changing core/devices; for a new device, follow
-  `tests/unit/devices.test.mjs` and add level/state semantics cases.
+  `tests/unit/devices.test.mjs` (GPIO semantics) or
+  `tests/unit/protocol.test.mjs` (protocol engines) and add level/state
+  semantics cases.
 - **Integration smoke** `tests/m1_smoke.mjs`: real wasm + firmware + runtime +
   devices (S1–S6 GPIO devices, S7/S8 LEDC register-level devices driven by
-  the `###P2` markers). **Timing lessons**:
-  - boot takes ~500+ batches (50k instr/batch) — do not hard-code batch
-    numbers, **drive by UART markers** (the firmware prints `###P1 start/end`
-    etc., see `tests/firmware/peris_probe/main/main.c`);
+  the `###P2` markers, S9 ws2812 by `###P3`, S10/S11 the M4 I2C+IR devices by
+  `###P4`). **Timing lessons**:
+  - **drive by UART markers, never batch counts** — with M4 leases standing
+    a sleep batch fast-forwards ~680k cycles, and a batch-count window
+    overshoots whole rounds (the firmware prints `###P1..P4 start/end` and
+    `###ROUND`, see `tests/firmware/peris_probe/main/main.c`);
+  - match markers with `startsWith` when the firmware appends data —
+    `###P1 end btn=N` once broke an exact-match flag;
   - the firmware resets the button counter at each P1 start, so the count may
-    only appear on the `###P1 end btn=N` line — do not match only `i=` lines;
-  - flushStates is throttled; `await` ~60ms before asserting on state.
+    only appear on the `###P1 end btn=N` line; presses need the emulated
+    cadence (every 8 batches held 3, §2);
+  - sample state via forced `rt.flushStates(true)` calls in loops — waiting
+    on the wall-clock throttle makes checks flaky.
 - **M0 probe** `tests/m0_probe.mjs`: after an upstream wasm upgrade this is
   **the first thing to run**; if any of the six conclusions (Q1a..Q3b)
   changed, update FEASIBILITY.md/EMU-API.md before touching other code.

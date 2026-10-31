@@ -45,9 +45,28 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
   低 9 位(LEDC ch0–5=45–50,0x100=普通 GPIO),WS2812→读 RMT 通道 RAM(发送后留存)。
   以上全部只有一份实现:`peris/devices/ledc-lib.js`——复用,禁止另写。
   地址表:`src/core/mmio/`,来源与验证:FEASIBILITY.zh-cn.md。
+- **RMT 通道 RAM(WS2812,M3 实测)**:copy encoder **每个 WS2812 位写一个
+  RMT 字**;字写到 48 后回绕;发送结束后 RAM 里只有复位符号、一个全零终止字
+  和**最后 46 位**——解码帧尾,以复位符号(低 ≥30µs)重同步并前置补零对齐
+  LED 网格。`CHnSTATUS` bits[11:9] ≠ 0 表示正在发送(此时跳过解码)。C3 的
+  RMT pad 信号只有 ch0/1(51/52)。唯一实现:`peris/devices/ws2812-lib.js`
+  ——复用,禁止另写。
 - **`vTaskDelay` 期间时间快进**:睡眠窗口内引脚级波形不可捕获,与采样率无关。
   CPU 活跃的位绑定波形可采样,但**同一批次间隙内连续翻转输入会丢边沿**
-  (press→release 必须隔批次,见 m1_smoke S3)。
+  (press→release 必须隔批次,见 m1_smoke S3)。警戒租约常设(~1000 指令/批)
+  时,睡眠批次跳跃 **~68 万周期**——一整轮固件 ~2500 批就跑完,而 P4 的细批
+  窗口要 ~16.6 万批。测试窗口**永不按批数定界**,一律按 UART 标记。
+- **客户时钟失真(M4)**:`esp_rom_delay_us` 推进的仿真时间只有名义值的
+  ~50%("9 ms" 引导突发实测 4.505 ms);`vTaskDelay` 保持完整时长。解码器
+  必须基于电平或比值,绝不能用绝对微秒窗口(见 FEASIBILITY.zh-cn.md
+  "M4 实测")。
+- **GPIO 输入脉冲需要仿真时间间隔(M4)**:警戒批尺寸下,每 8 批按压、保持
+  3 批(仿真约 10–40 ms)计数可靠;更密会丢边沿,M0 的指令数形状放不进
+  一个相位。
+- **RMT `CHnSTATUS.APB_MEM_WADDR` 恒读 0**(未实现)——发送中途拼接通道
+  RAM 不可行,只能用发送后的窗口。
+- **BME280 的 dig_T1/dig_P1 是 uint16**(Bosch 布局):36477 在 int16 里静默
+  变负——T/H 仍吻合、只有 P 偏离(正是靠这个特征定位的 bug)。
 - `gpio_set_input` 默认电平高(上拉);能触发固件 GPIO 中断(可靠)。
 - 新 `WasmEmulator` 实例后输入电平复位 → 设备必须在 `onEmuReady()` 重驱动。
 
@@ -79,6 +98,12 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
    引用同一份实现。LEDC 设备的 `pins()` 返回 `[]`(接线是固件侧路由,无可声明);
    通用编辑器的 `<select>` 回传**字符串**(`parseChannel` 归一化;小心
    `Number(null)===0`)。
+10. **位绑定设备依托采样调度器(M4)**:构造时 `ctx.armSampling` 一次(空闲
+   监视),每个边沿 `ctx.fineSampling`(可续约租约;CPU 睡眠快进自动失效)。
+   禁止常驻细批轮询——调度器是唯一的批量路径(`runtime.batchSize()`,worker
+   与测试共用)。总线设备声明 `static sharedBus = true`;runtime 对共享焊盘
+   的输入驱动做线与(gpio_set_input 是单赢家电平写——两个从机引擎否则会
+   互相覆盖 ACK 拉低,真实 M4 缺陷)。
 
 ## 4. 曾踩过的 bug(防止回潮)
 
@@ -94,22 +119,32 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
 | 节流窗口丢最后一次状态 | 尾随 flush(见 §3.6) |
 | LED 行图标颜色与详情灯泡不一致(0.3.0) | 面板曾先 setConfig 后 rowIcon,且插件两处各自设色;统一 setColour + 固定调用顺序(§3.8) |
 | 换芯片加载固件后,详情编辑器 GPIO 选项仍是旧芯片(0.3.0) | 编辑器把 validPins 快照在构建时;芯片变化必须重建编辑器;选项构建统一走 fillPinOptions(§3.8) |
+| m1 标记:`line === '###P1 end'` 永不匹配(固件打印 `###P1 end btn=N`),inP1 卡在 true,循环跑过整轮(M4) | 固件在标记后追加数据时要用 `startsWith` 匹配;卡死的相位标志会静默出错——一切循环按标记定界 |
+| 同总线两个 I2C 从机每笔事务都 NACK(M4) | gpio_set_input 是单赢家电平写;共享总线焊盘需要 runtime 的线与仲裁(`sharedBus` 元数据) |
+| 引擎从不应答读方向地址字节(M4,单测抓出) | ACK 决定属于**刚完成的字节**(`ackThisByte`),不能按(已切换的)phase 判断 |
+| C 补偿与 JS 模型只在气压上分歧(M4) | dig_P1 在 Bosch 布局里是 uint16;36477 在 int16 回绕成负——靠冒烟测试保持 C/JS 逐位一致 |
 
 ## 5. 测试与验证约定
 
 - **单元测试**(node:test,零依赖):纯逻辑——sigbus 位运算、电平语义、配置校验、
   MMIO 地址表,以及基于**假 MMIO** 的 LEDC 占空比解码/接线扫描/自动绑定语义
   (`Map<addr,u32>` + 真实 C3 表,见 tests/unit/devices.test.mjs 的 `makeMmioCtx`)。
-  改 core/devices 必跑;新增设备请仿照 `tests/unit/devices.test.mjs`
-  补电平/状态语义用例。
+  M4 协议层(调度器租约、合成开漏主机驱动的 I2C 引擎、寄存器模型、补偿
+  锚点、NEC 解码、sharedBus 规则)在 `tests/unit/protocol.test.mjs`。
+  改 core/devices 必跑;新增设备按类型仿照 `tests/unit/devices.test.mjs`
+  (GPIO 语义)或 `tests/unit/protocol.test.mjs`(协议引擎)补用例。
 - **集成冒烟** `tests/m1_smoke.mjs`:真实 wasm+固件+runtime+设备
-  (S1–S6 GPIO 设备,S7/S8 为 LEDC 寄存器级设备,按 `###P2` 标记驱动)。
+  (S1–S6 GPIO 设备,S7/S8 LEDC 寄存器级设备按 `###P2` 标记驱动,S9
+  ws2812 按 `###P3`,S10/S11 为 M4 的 I2C+IR 设备按 `###P4`)。
   **时序经验**:
-  - boot 约占 500+ 批(50k 指令/批),别盲选批次号,**按 UART 标记驱动**
-    (固件用 `###P1 start/end` 等标记,见 `tests/firmware/peris_probe/main/main.c`);
-  - 固件在每轮 P1 start 把按键计数**清零**,计数可能只出现在 `###P1 end btn=N` 行,
-    断言正则别只匹配 `i=` 行;
-  - flushStates 有节流,读状态断言前 `await` ~60ms。
+  - **按 UART 标记驱动,永不按批数**——M4 租约常设时一个睡眠批次快进
+    ~68 万周期,按批数的窗口会跑过整轮(固件打印 `###P1..P4 start/end`
+    与 `###ROUND`,见 `tests/firmware/peris_probe/main/main.c`);
+  - 固件在标记后追加数据时用 `startsWith` 匹配——`###P1 end btn=N` 曾
+    让全等匹配失效;
+  - 固件在每轮 P1 start 把按键计数**清零**,计数可能只出现在
+    `###P1 end btn=N` 行;按压需要仿真节奏(每 8 批保持 3 批,§2);
+  - 测试里采样状态用强制 `rt.flushStates(true)`——等墙钟节流会让断言抖动。
 - **M0 探针** `tests/m0_probe.mjs`:上游 wasm 升级后**第一个跑**的东西,六项
   结论(Q1a..Q3b)若有变化先改 FEASIBILITY/EMU-API 文档再动其它代码。
 - **GUI 冒测**(手动,清单在 ARCHITECTURE §5):本会话所用 IAB 自动化易劣化

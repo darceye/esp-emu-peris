@@ -5,6 +5,7 @@
  */
 import { Sigbus } from './sigbus.js';
 import type { EmuGpio } from './sigbus.js';
+import { FineScheduler } from './scheduler.js';
 import { loadRegistry } from './registry.js';
 import type { Registry } from './registry.js';
 import { PERIS_READY, PERIS_STATE, PERIS_LOG } from './protocol.js';
@@ -28,12 +29,23 @@ interface CtxHolder { dev?: DeviceLike }
 export class PerisRuntime {
     private registry: Registry | null = null;
     private sigbus: Sigbus;
+    private scheduler = new FineScheduler();
     private emu: EmuGpio | null = null;
     private chip = 'esp32c3';
     private devices = new Map<string, DeviceEntry>();
     private dirty = new Set<string>();
     private lastFlush = 0;
     private flushTimer: ReturnType<typeof setTimeout> | null = null;
+    private cyclesPerUsCached = 0;
+    /**
+     * Open-drain arbitration (M4): pins claimed by several sharedBus
+     * devices (an I2C SDA/SCL pair). gpio_set_input is a level write with
+     * a single winner, so two slave engines would clobber each other's
+     * ACK pull — instead every device-level drive goes through a
+     * wired-AND: the pad input goes low while ANY device pulls low.
+     */
+    private busPins = new Set<number>();
+    private pulls = new Map<number, Set<string>>();
     /** overridable for tests; the worker passes self.postMessage */
     post: RuntimePost = (msg) => { (globalThis as { postMessage?: (m: unknown) => void }).postMessage?.(msg); };
 
@@ -48,6 +60,7 @@ export class PerisRuntime {
     attachEmu(emu: EmuGpio | null, chip?: string) {
         this.emu = emu;
         if (chip) this.chip = chip;
+        this.cyclesPerUsCached = emu && typeof emu.cycles_per_us === 'function' ? emu.cycles_per_us() : 0;
         this.sigbus.attach(emu);
         for (const { instance } of this.devices.values()) instance.onEmuReady?.();
     }
@@ -60,13 +73,14 @@ export class PerisRuntime {
             try { await this.init(); } catch { /* reported below */ }
         }
         const errors: string[] = [];
-        const usedPins = new Map<number, string>();
+        const usedPins = new Map<number, { id: string; shared: boolean }>();
 
         for (const { instance } of this.devices.values()) {
             try { instance.destroy?.(); } catch { /* ignore */ }
         }
         this.devices.clear();
         this.sigbus = new Sigbus(this.emu);
+        this.scheduler.reset(); // leases are keyed by device id — new config incoming
 
         const devices = Array.isArray(config?.devices) ? config.devices : [];
         for (const cfg of devices) {
@@ -84,18 +98,21 @@ export class PerisRuntime {
                 const instance = new meta(this.ctxFor(id, holder), cfg);
                 holder.dev = instance;
 
-                // Pin conflict check (v1: one device per pin, any direction).
+                // Pin conflict check (v1: one device per pin, any direction —
+                // except bus devices that declare sharedBus, which may share
+                // pins with each other: two I2C slaves on one SCL/SDA pair).
                 const pins = meta.pins(cfg);
                 for (const p of pins) {
                     if (typeof p !== 'number' || p < 0 || p >= gpioCount(this.chip) || absentPins(this.chip).has(p)) {
                         errors.push(`${id}: pin ${String(p)} is not a valid ${this.chip} GPIO`);
                         continue;
                     }
-                    if (usedPins.has(p)) {
-                        errors.push(`${id}: pin ${p} already used by ${usedPins.get(p)}`);
+                    const claim = usedPins.get(p);
+                    if (claim && !(claim.shared && meta.sharedBus)) {
+                        errors.push(`${id}: pin ${p} already used by ${claim.id}`);
                         continue;
                     }
-                    usedPins.set(p, id);
+                    usedPins.set(p, { id, shared: !!meta.sharedBus });
                 }
                 this.devices.set(id, { instance, meta, cfg });
                 instance.onEmuReady?.();
@@ -113,6 +130,25 @@ export class PerisRuntime {
             })),
         });
 
+        // Open-drain arbitration map: pins claimed by more than one
+        // sharedBus device (the conflict rule above already rejected
+        // mixed sharing).
+        this.busPins = new Set();
+        this.pulls = new Map();
+        const claims = new Map<number, { shared: boolean }[]>();
+        for (const { meta, cfg, instance } of this.devices.values()) {
+            for (const p of meta.pins(cfg)) {
+                if (typeof p !== 'number') continue;
+                const list = claims.get(p) ?? [];
+                list.push({ shared: !!meta.sharedBus });
+                claims.set(p, list);
+                void instance;
+            }
+        }
+        for (const [pin, list] of claims) {
+            if (list.length > 1 && list.every((c) => c.shared)) this.busPins.add(pin);
+        }
+
         // Push each device's initial state so views render before the
         // first pin change.
         for (const id of this.devices.keys()) this.dirty.add(id);
@@ -121,6 +157,17 @@ export class PerisRuntime {
 
     command(id: string, cmd: string, params?: Record<string, unknown>) {
         this.devices.get(id)?.instance.onCommand?.(cmd, params);
+    }
+
+    /**
+     * run_batch size for the caller's next emulator step, honouring the
+     * devices' sampling leases (M4 fine-grained scheduler). The worker's
+     * run loop and the smoke test both funnel through here so lease
+     * semantics live in exactly one place.
+     */
+    batchSize(coarse: number): number {
+        const cycles = this.emu && typeof this.emu.cycles === 'function' ? this.emu.cycles() : 0;
+        return this.scheduler.nextSize(coarse, cycles);
     }
 
     /** Called by the worker after every run_batch. */
@@ -165,6 +212,20 @@ export class PerisRuntime {
         this.post({ type: PERIS_LOG, level, text });
     }
 
+    /** Device-level input drive; bus pins resolve as a wired-AND. */
+    private driveInput(id: string, pin: number, high: boolean) {
+        if (!this.busPins.has(pin)) {
+            this.sigbus.setInput(pin, high);
+            return;
+        }
+        let set = this.pulls.get(pin);
+        if (!set) { set = new Set(); this.pulls.set(pin, set); }
+        const before = set.size > 0;
+        if (high) set.delete(id); else set.add(id);
+        const after = set.size > 0;
+        if (before !== after) this.sigbus.setInput(pin, !after);
+    }
+
     private ctxFor(id: string, holder: CtxHolder): DeviceCtx {
         const rt = this;
         const self = () => holder.dev ?? rt.devices.get(id)?.instance;
@@ -176,7 +237,10 @@ export class PerisRuntime {
             // resolved per read: applyConfig may change the chip before the
             // next emulator load
             get mmio() { return mmioFor(rt.chip); },
-            setPinInput: (pin, high) => rt.sigbus.setInput(pin, high),
+            setPinInput: (pin, high) => rt.driveInput(id, pin, high),
+            armSampling: (batch) => rt.scheduler.arm(id, batch),
+            fineSampling: (batch, forCycles) => rt.scheduler.requestFine(id, batch, forCycles),
+            releaseSampling: () => rt.scheduler.release(id),
             readMem: (addr, len) => rt.emu ? rt.emu.read_memory(addr >>> 0, len) : new Uint8Array(0),
             readU32(addr) {
                 if (!rt.emu) return 0;
@@ -184,6 +248,7 @@ export class PerisRuntime {
                 return (b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24)) >>> 0;
             },
             cycles: () => rt.emu ? rt.emu.cycles() : 0,
+            cyclesPerUs: rt.cyclesPerUsCached,
             subscribe: (pins) => rt.sigbus.subscribe(subFn, pins),
             unsubscribe: () => rt.sigbus.unsubscribe(subFn),
             markDirty: () => { rt.dirty.add(id); },

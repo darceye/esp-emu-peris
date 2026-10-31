@@ -16,7 +16,9 @@ build/                  compiler output (tsc, not in git; core/ + ui/)
 peris/
   devices/              peripheral plugins (plain JS, drop-in, each with its own version):
                         led/button/touch-button/toggle-switch + pwm-led/rgb-led (register-level,
-                        shared helpers in ledc-lib.js)
+                        shared helpers in ledc-lib.js) + ws2812 (RMT channel RAM, ws2812-lib.js)
+                        + bitbang-i2c-slave (24C02/BME280, i2c-lib.js) + ir-nec (NEC receiver,
+                        nec-lib.js; both ride the M4 fine-batch sampling scheduler)
   vendor/ peris.css     vendored xterm + panel styles
 examples/               wiring-config examples (JSON, directly importable)
 tests/unit/             unit tests (node:test)
@@ -69,8 +71,9 @@ npm run sync                 # copies the entry html + peris/ (incl. build outpu
 | LEDs, any colour | ✅ M1 | polls the GPIO output registers |
 | Push button / touch button (GPIO semantics) / toggle switch | ✅ M1 | drives pin input; firmware reads it and gets interrupts |
 | PWM dimmed LED / RGB LED | ✅ M2 | reads LEDC duty registers; channel→pin wiring auto-discovered from the GPIO matrix (pin-level PWM is invisible); canvas brightness interpolation for breathing effects |
-| WS2812 addressable LEDs | 🔜 M3 | decodes from RMT channel RAM (pin-level waveform invisible) |
-| Bit-banged I2C/SPI devices, IR | 🔜 M4 | high-rate pin sampling (requires bit-banged firmware) |
+| WS2812 addressable LEDs | ✅ M3 | decodes from RMT channel RAM (pin-level waveform invisible); strip/ring/matrix Views. Long strips recover only their tail — the 48-word channel RAM keeps the last 46 bits of a frame (same as real C3 hardware) |
+| Bit-bang I2C slave (24C02 EEPROM, BME280) | ✅ M4 | level-driven protocol engine on two bit-banged GPIOs (SCL/SDA); answers via the SDA input path (open-drain idiom); several slaves may share one bus (wired-AND arbitration); BME280 compensation mirrored bit-exactly |
+| IR NEC receiver | ✅ M4 | captures firmware codes from a bit-banged GPIO (fine-batch edge sampling) or an RMT TX channel (channel RAM); ratio-based decode (the guest clock is not wall-accurate); repeat frames included |
 | Hardware I2C/SPI devices, displays, ADC, real touch, I2S, SD | ⏸ M5 | waiting for esp-emulator upstream APIs |
 
 Note: the touch **peripheral** itself is not emulated — the touch button
@@ -117,10 +120,12 @@ npm test                     # unit + integration smoke (test layering in docs/A
 npm run test:m0              # emulator capability probe (run first on upstream upgrades)
 ```
 
-The firmware runs a three-phase loop: GPIO8 blink / LEDC breathing on
+The firmware runs a four-phase loop: GPIO8 blink / LEDC breathing on
 GPIO9+GPIO6+GPIO7 (ch0 ramps, ch1 mirrors down, ch2 holds half duty) /
-GPIO4 RMT-WS2812 frames, plus GPIO3 input-interrupt counting, for end-to-end
-verification.
+GPIO4 RMT-WS2812 frames / a ~20 kHz soft-I2C master on SCL=GPIO1+SDA=GPIO2
+(24C02 + BME280 transactions, BME compensation cross-checked bit-exactly)
+plus NEC IR codes bit-banged on GPIO5 and sent via RMT ch1 on GPIO10 —
+plus GPIO3 input-interrupt counting, for end-to-end verification.
 
 Note: the page itself has no CDN dependency — xterm/xterm-addon-fit are
 vendored into `peris/vendor/` (unminified npm builds), so it works offline.

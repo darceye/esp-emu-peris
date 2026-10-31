@@ -224,6 +224,12 @@
 /* PWM / RGB bulb body (canvas painted by ledc-lib drawBulb) */
 .pwm-bulb { display: block; border-radius: 50%; }
 
+/* WS2812 strip body (canvas painted by ws2812-lib drawLedDot); the wrap is
+ * column-oriented so strip/ring/matrix canvases of different shapes centre */
+.ws-wrap { display: flex; align-items: center; justify-content: center; padding: 6px 0; }
+.ws-canvas { display: block; }
+.ws-icon { display: block; }
+
 .icon-press {
     width: 22px; height: 22px; padding: 0; border-radius: 50%;
     border: 1px solid var(--border-strong); background: var(--surface-3);
@@ -336,3 +342,47 @@
 .hw-switch input:checked + .sw-track { background: var(--accent-soft); border-color: var(--accent); }
 .hw-switch input:checked + .sw-track .sw-knob { left: 24px; background: var(--accent); border-color: var(--accent); }
 .sw-text { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+/* ---- M4 protocol devices (bitbang I2C slave, IR NEC) ---------------------- */
+
+.i2c-body { display: flex; flex-direction: column; align-items: stretch; gap: 6px; font-size: 11px; }
+.i2c-status { font-family: var(--mono); color: var(--muted); text-align: center; }
+.i2c-log { max-height: 96px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.i2c-entry { display: flex; gap: 8px; font-family: var(--mono); color: var(--muted); }
+.i2c-dir { color: var(--accent-text); min-width: 64px; }
+.i2c-bytes { color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.i2c-empty, .ir-empty { color: var(--faint); text-align: center; font-style: italic; }
+.i2c-hex { font-family: var(--mono); font-size: 10px; line-height: 1.45; color: var(--faint);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+.i2c-hex-row { display: flex; gap: 3px; }
+.i2c-hex-addr { color: var(--border-strong); min-width: 26px; }
+.i2c-hex-row span:not(.i2c-hex-addr) { min-width: 16px; text-align: center; }
+.i2c-hex-row span.set { color: var(--accent-text); font-weight: 700; }
+.i2c-io { display: flex; gap: 6px; align-items: center; }
+.i2c-io input { background: var(--bg); border: 1px solid var(--border-strong); color: var(--muted);
+    border-radius: 4px; padding: 3px 6px; font-size: 10.5px; font-family: var(--mono); }
+.i2c-io .i2c-addr { width: 44px; }
+.i2c-io .i2c-bytes-in { flex: 1; min-width: 90px; }
+.i2c-regs { display: flex; flex-direction: column; gap: 2px; font-family: var(--mono); }
+.i2c-reg { display: flex; justify-content: space-between; color: var(--muted); }
+.i2c-reg span:last-child { color: var(--accent-text); }
+.i2c-icon, .ir-icon {
+    display: inline-flex; align-items: center; justify-content: center; gap: 2px;
+    font-family: var(--mono); font-size: 9px; font-weight: 700; letter-spacing: 0.4px;
+    color: var(--faint); border: 1px solid var(--border-strong); border-radius: 4px;
+    padding: 2px 4px; min-width: 22px; transition: color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.i2c-icon.live, .ir-icon.live { color: var(--accent-text); border-color: var(--accent);
+    box-shadow: 0 0 8px 1px var(--accent-soft); }
+.ir-icon::after { content: attr(data-count); font-size: 8.5px; color: var(--accent-text); }
+
+.ir-body { display: flex; flex-direction: column; align-items: stretch; gap: 6px; font-size: 11px; }
+.ir-last { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 22px; }
+.ir-code { font-family: var(--mono); font-size: 13px; color: var(--accent-text); font-weight: 700; }
+.ir-valid { font-size: 9px; font-weight: 700; letter-spacing: 0.8px; color: var(--muted);
+    border: 1px solid var(--border-strong); border-radius: 4px; padding: 1px 5px; }
+.ir-valid.bad { color: var(--faint); border-style: dashed; }
+.ir-repeat { font-family: var(--mono); font-size: 10px; color: var(--faint); }
+.ir-list { max-height: 92px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.ir-entry { font-family: var(--mono); color: var(--muted); }
+.ir-cap { text-align: center; font-size: 10.5px; color: var(--faint); font-family: var(--mono); }

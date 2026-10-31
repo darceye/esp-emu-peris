@@ -8,6 +8,122 @@ CHANGELOG.zh-cn.md).
 Rules: major = breaking protocol/architecture change; minor = new capability;
 patch = fixes and small changes.
 
+## peris 0.8.0 (M4)
+
+- **Fine-grained sampling scheduler** (`src/core/scheduler.ts`): run_batch
+  sizes are leased per device. An **arm lease** holds a standing ~1000
+  instruction batch while a device watches an idle bus (cheap enough to
+  keep, fine enough to resolve a START on buses down to ~20 kHz); a **fine
+  lease** (~300 instructions) engages while a transfer is in flight so
+  every CPU-driven edge survives between samples — leases expire on their
+  cycle deadline or when the emulator fast-forwards through a CPU sleep
+  window (nothing is sampleable there, M0). The worker's run loop and the
+  smoke test both call `runtime.batchSize()`; there is no second execution
+  path. New `DeviceCtx` members: `armSampling` / `fineSampling` /
+  `releaseSampling` and `cyclesPerUs`.
+- **Bit-bang I2C slave** (`bitbang-i2c-slave.js` v1.0.0, logic in
+  `i2c-lib.js`): emulates a **24C02 EEPROM** (256 B, byte-accurate writes,
+  pointer wrap, non-volatile across emulator reloads, UI preload/erase) or
+  a **BME280** (chip id, factory calibration block, ctrl registers, forced
+  measurements with a counter-driven fake signal, full Bosch integer
+  compensation mirrored bit-exactly in JS) behind two firmware bit-banged
+  GPIOs. The engine is level-driven (open-drain model: drive-low =
+  out0∧oe; the slave answers on the SDA *input* path, which the master
+  sees while it releases the pad — the standard soft-I2C idiom). Clock
+  stretching is not modelled; push-pull masters that never release SDA
+  cannot be answered (documented).
+- **IR NEC receiver** (`ir-nec.js` v1.0.0, logic in `nec-lib.js`): captures
+  firmware NEC codes both ways — **bit-banged 38 kHz carrier** on a GPIO
+  (edges → burst envelope during fine-batch windows) and **carrier-less
+  RMT symbols** (a 34-word frame fits the post-transmission 48-word
+  channel RAM, so it decodes from MMIO exactly like the M3 ws2812; the
+  emulator leaves `CHnSTATUS.APB_MEM_WADDR` at 0, so mid-transmission RAM
+  stitching is impossible — M4 probe). The decoder is **fully
+  ratio-based** (leader dominance, leader-gap 1/2 vs 1/4, bit gap/burst ≈1
+  vs ≈3) because the guest clock is not wall-accurate on this emulator
+  build. `source: auto` picks RMT when the pin routes to an RMT TX
+  channel, gpio otherwise.
+- **Shared buses**: `static sharedBus = true` devices may share pins with
+  each other (two I2C slaves on one SCL/SDA pair is legal wiring). The
+  runtime resolves shared-pad input drives as a **wired-AND** (any pull-low
+  wins) — without it, two slave engines clobber each other's ACKs (a real
+  M4 bug: the ignored-address slave released SDA over the addressed
+  slave's ACK). Non-shared devices still conflict per the v1 rule; the
+  page's pin-option builder is candidate-aware.
+- **Test firmware P4**: a ~20 kHz soft-I2C master (open-drain idiom) runs
+  EEPROM write/read-back/pointer-wrap, BME280 id/calibration/forced-measure
+  loops, and NEC codes go out twice (bit-bang GPIO5 incl. a repeat frame;
+  RMT ch1 on GPIO10 at 1 MHz). The firmware prints raw adc values **and**
+  its C-side Bosch compensation; the smoke test asserts bit-exact parity
+  with the JS model — which caught two real bugs: `dig_P1` must be
+  **uint16** (36477 silently wraps negative in int16) and the NEC inverse
+  byte needs `& 0xFF`.
+- Tests: `tests/unit/protocol.test.mjs` (26 cases — scheduler policy,
+  engine state machine against a synthetic open-drain master, register
+  models, compensation pins, NEC decode incl. carrier envelopes and RMT
+  words, device-level fake-MMIO paths, sharedBus rule); smoke S10/S11 on
+  real firmware. All loops are now **marker-bounded** (armed batches
+  fast-forward ~680k cycles each, so batch-count windows overshoot whole
+  rounds) and state sampling uses forced flushes (no wall-clock jitter).
+- Docs: FEASIBILITY gained the M4 measurements (guest-clock distortion,
+  fast-forward rates, input-pulse cadence, WADDR=0); DEVICE-API documents
+  the sampling leases and sharedBus; ROADMAP M4 → shipped.
+
+| device | version |
+|---|---|
+| led | 1.1.1 |
+| button / touch-button / toggle-switch | 1.1.0 |
+| pwm-led / rgb-led | 1.0.0 |
+| ws2812 | 1.0.0 |
+| bitbang-i2c-slave | 1.0.0 |
+| ir-nec | 1.0.0 |
+
+## peris 0.7.0 (M3)
+
+- **WS2812 Strip** (`ws2812.js` v1.0.0): an addressable LED strip on one RMT
+  TX channel. Frames are decoded from the RMT channel RAM after every batch
+  (the M0 Q3b path; the pad-level waveform never reaches the GPIO registers).
+  The M3 probe pinned the RAM layout the decoder builds on: the copy encoder
+  emits **one RMT word per WS2812 bit**, words wrap every 48, and after a
+  transmission the RAM holds the reset symbol, an all-zero transmit
+  terminator and **only the last 46 bits of the frame** — so for strips
+  longer than ~2 LEDs only the tail LEDs are recoverable (the same limit as
+  real C3 hardware; the View draws unrecoverable LEDs as hollow placeholders
+  and the caption shows `visible/total`). Frame boundaries resync on the
+  reset symbol (low ≥ 30 µs) and the LED byte grid is realigned by
+  prepending the lost leading bits (measured: 2 for 8-LED frames).
+- **Auto/manual RMT channel binding**: the channel is discovered from the
+  GPIO-matrix routing (`RMT_SIG_OUT0/1` = 51/52 on C3; ch2/3 are RX-only and
+  not offered) and followed across firmware rewirings, or picked manually —
+  same semantics as the M2 LEDC devices, reusing `ledc-lib`'s
+  `parseChannel`/rescan cadence.
+- **TX-busy gate**: `CHnSTATUS` bits[11:9] (RMT state machine, 1 = sending)
+  is readable in the emulator; while a transmission is in flight the device
+  skips decoding, so half-overwritten RAM windows are never latched (on an
+  emulator without STATUS it degrades to latest-snapshot-wins).
+- **Strip / ring / matrix Views** with GRB/RGB order, brightness cap and
+  gamma configurable; frame transitions interpolate on canvas like the M2
+  bulbs (the `ledc-lib` animator drives the details canvas and the row icon
+  through one paint path). Shared decode/geometry/painting logic lives in
+  `peris/devices/ws2812-lib.js` (outside the manifest, imported by the
+  plugin and the unit tests).
+- C3 MMIO table: the RMT section gained `ch(n)` (channel RAM + STATUS
+  addresses), channel counts and the `rmtCh1` signal id; the unused
+  `ch0conf0`/`ch1conf0` fields were dropped.
+- Test firmware: P3 gained a trailing non-uniform "grad" burst (all red,
+  n-2 green, n-1 blue) that pins per-LED tail alignment — a decoder that
+  realigns correctly must read the last LED pure blue and the second-to-last
+  green with G=0x3f (its two high G bits are lost to the RAM wrap).
+- Tests: unit tests against synthetic channel RAM built with the measured
+  write model (single-LED full decode, 8-LED 46-bit tail, grad alignment,
+  no-reset/terminator guards, STATUS busy gate, auto/manual binding, count
+  trim, layouts, cap/gamma math); integration smoke S9 on real firmware
+  (auto-binding ch0→GPIO4, the colour walk, the grad alignment). All six M0
+  conclusions re-verified after the firmware change.
+- Docs: ROADMAP M3 → shipped; FEASIBILITY gained the measured RMT RAM/STATUS
+  details; DEVICE-API examples list the new plugin/lib; README capability
+  table updated.
+
 ## peris 0.6.0 (M2)
 
 - **PWM LED** (`pwm-led.js` v1.0.0): an LED dimmed by one LEDC channel. The
@@ -168,6 +284,7 @@ patch = fixes and small changes.
 
 | typeId | version | change |
 |---|---|---|
+| ws2812 | 1.0.0 | initial (M3): RMT channel-RAM frame decode with reset resync + leading-zero realignment, auto/manual channel binding, TX-busy gate, strip/ring/matrix Views with cap/gamma |
 | pwm-led | 1.0.0 | initial (M2): LEDC DUTY_R duty, auto/manual channel binding, canvas brightness interpolation |
 | rgb-led | 1.0.0 | initial (M2): three LEDC channels mixed additively, lowest-channel auto assignment |
 | led | 1.1.1 | fix: row-icon colour disagreed with config — one `setColour` for bulb + row icon |

@@ -309,9 +309,10 @@ function runLoop() {
 
     // Run multiple batches per animation frame for throughput
     while (running) {
-        const output = emulator.run_batch(batchSize);
+        const size = peris.batchSize(batchSize); // peris: M4 fine-batch leases
+        const output = emulator.run_batch(size);
         allOutput += output;
-        totalCycles += batchSize;
+        totalCycles += size;
 
         peris.onBatchEnd(); // peris: pin sample + throttled state flush
 

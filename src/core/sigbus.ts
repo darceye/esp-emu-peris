@@ -14,6 +14,8 @@ export interface EmuGpio {
     gpio_set_input(pin: number, high: boolean): void;
     read_memory(addr: number, len: number): Uint8Array;
     cycles(): number;
+    /** Present on the wasm emulator; 0 when the build lacks it. */
+    cycles_per_us?(): number;
 }
 
 export class Sigbus {

@@ -23,6 +23,8 @@ export class Device {          // runs in the worker, talks to the emulator
     static category    = 'basic';     // Add-menu grouping
     static description = '...';       // one-line explanation (tooltip)
     static defaultConfig = {...};     // defaults for new instances
+    static sharedBus = true;          // optional (M4): pins may overlap with
+                                      //   OTHER sharedBus devices (bus wiring)
     static configSchema = [           // generic config editor fields (in the
                                   // expanded details, one per line)
         { key: 'pin',    label: 'GPIO pin', type: 'pin' },
@@ -97,6 +99,10 @@ The peripherals pane is its own column in the three-pane layout
 | `ctx.subscribe(pins)` / `ctx.unsubscribe()` | subscribe to pin-output changes (onPinState) |
 | `ctx.readMem(addr, len)` / `ctx.readU32(addr)` | bus/MMIO reads (LEDC duty, RMT RAM, …) |
 | `ctx.cycles()` | emulator cycle counter |
+| `ctx.cyclesPerUs` | emulator clock in cycles per µs (edge timing → time units) |
+| `ctx.armSampling(batch)` | M4 scheduler: standing run_batch size while this device watches an idle bus |
+| `ctx.fineSampling(batch, forCycles)` | M4 scheduler: fine batches for the next `forCycles` cycles (renew while a transfer is in flight); auto-expires on CPU-sleep fast-forward |
+| `ctx.releaseSampling()` | drop this device's scheduler leases (destroy) |
 | `ctx.markDirty()` | request getState() to be pushed to the page soon |
 | `ctx.log(text, level?)` | print a `[Peris]` line on the UART console |
 
@@ -126,6 +132,47 @@ Two pitfalls the helpers already handle: the generic editor's `<select>`
 hands values back as **strings** (`parseChannel` accepts `'3'` and
 `Number(null) === 0` is guarded), and `idf.py merge-bin`'s `-o` is relative
 to the build dir (`tests/firmware/merge.ps1`).
+
+The M3 WS2812 plugin follows the same pattern with
+**`peris/devices/ws2812-lib.js`** (RMT channel-RAM read, `CHnSTATUS` TX-busy
+gate, wiring scan, frame decode with reset resync + leading-zero
+realignment, LED-grid geometry/painters; channel parsing and the animator
+are imported from ledc-lib — same semantics, one implementation). Its
+measured constraint, surfaced in the UI: a 48-word channel RAM retains only
+the last 46 bits of a frame, so long strips decode only their tail LEDs
+(see FEASIBILITY.md §"Key technical details" 3–4).
+
+## Bit-bang protocol devices (M4)
+
+CPU-driven (bit-banged) waveforms ARE visible in `onPinState` — but
+`gpio_state()` is sampled once per `run_batch`, so every edge only survives
+when the batch is small compared with the signal's half period. Devices
+lease batch sizes through the scheduler (`src/core/scheduler.ts`):
+
+- `ctx.armSampling(~1000)` once — a standing watch batch while the bus is
+  idle (cheap, resolves a START on buses down to ~20 kHz);
+- `ctx.fineSampling(~300, forCycles)` on every edge — renews a fine window
+  for the rest of the transfer; it expires on its cycle deadline or when
+  the emulator fast-forwards through a CPU sleep (nothing sampleable there).
+
+Timings inside the guest are NOT wall-accurate (`esp_rom_delay_us` runs at
+~50% of nominal — FEASIBILITY.md §"M4 measurements"), so decoders must be
+level- or ratio-based, never absolute-µs. The M4 plugins follow both rules:
+
+- `peris/devices/bitbang-i2c-slave.js` — 24C02 EEPROM / BME280 models on
+  two bit-banged GPIOs (SCL/SDA; `sharedBus` lets several slaves share the
+  pair, and the runtime wired-ANDs shared pads' input drives). Engine,
+  register models and bit-exact Bosch compensation live in
+  `peris/devices/i2c-lib.js`. The slave answers via the SDA input path —
+  visible to the master exactly while it releases the pad (open-drain
+  idiom); push-pull masters that never release cannot be answered, and
+  clock stretching is not modelled.
+- `peris/devices/ir-nec.js` — NEC capture from a bit-banged GPIO (edges →
+  burst envelope in fine windows, flush after ~25 ms quiet) or from an RMT
+  TX channel (34-word frames fit the post-TX channel RAM; the emulator
+  leaves `APB_MEM_WADDR` at 0 so mid-TX stitching is impossible). Ratio-
+  based decode; `source: auto` prefers RMT routing. Envelope + decode in
+  `peris/devices/nec-lib.js`.
 
 ## Message protocol (page ↔ worker)
 
@@ -194,4 +241,10 @@ Added on top of the stock worker protocol (see `peris/protocol.js`):
 - `peris/devices/pwm-led.js` / `rgb-led.js` — register-level devices
   (onBatch + ctx.mmio + ledc-lib wiring scan/duty decode, canvas
   interpolation View)
+- `peris/devices/ws2812.js` — register-level device on the RMT channel RAM
+  (onBatch + ctx.mmio + ws2812-lib frame decode, strip/ring/matrix Views)
 - `peris/devices/ledc-lib.js` — shared helper module (not a device)
+- `peris/devices/ws2812-lib.js` — shared helper module (not a device)
+- `peris/devices/bitbang-i2c-slave.js` — bit-bang I2C slave (i2c-lib.js engine)
+- `peris/devices/ir-nec.js` — NEC receiver, gpio + RMT capture (nec-lib.js)
+- `peris/devices/i2c-lib.js` / `peris/devices/nec-lib.js` — shared helper modules (not devices)

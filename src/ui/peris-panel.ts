@@ -9,7 +9,7 @@
 import { loadRegistry } from '../core/registry.js';
 import type { Registry } from '../core/registry.js';
 import { normaliseConfig } from '../core/types.js';
-import type { DeviceConfig, PerisConfig, ViewClass, ViewHost, ViewLike } from '../core/types.js';
+import type { DeviceConfig, DeviceMeta, PerisConfig, ViewClass, ViewHost, ViewLike } from '../core/types.js';
 import { PERIS_API_VERSION, PERIS_CONFIG, PERIS_COMMAND, PERIS_READY, PERIS_STATE, PERIS_LOG } from '../core/protocol.js';
 import type { PerisEvent } from '../core/protocol.js';
 import { validPins } from '../core/chips.js';
@@ -145,18 +145,25 @@ export class PerisPanel {
 
     // ---- rows ----
 
-    private usedPins(exceptId: string): Set<number> {
+    /**
+     * Pins claimed by other devices, from the perspective of `candidate`
+     * (the device about to use the set): sharedBus devices ignore each
+     * other's pins — two I2C slaves on one bus is legal wiring.
+     */
+    private usedPins(exceptId: string, candidate?: DeviceMeta | null): Set<number> {
         const used = new Set<number>();
         for (const d of this.config.devices) {
             if (d.id === exceptId) continue;
             const meta = this.registry?.meta(d.type);
-            if (meta) for (const p of meta.pins(d)) used.add(p);
+            if (!meta) continue;
+            if (candidate?.sharedBus && meta.sharedBus) continue;
+            for (const p of meta.pins(d)) used.add(p);
         }
         return used;
     }
 
-    private freePin(preferred: number | undefined): number | null {
-        const used = this.usedPins('');
+    private freePin(preferred: number | undefined, candidate?: DeviceMeta | null): number | null {
+        const used = this.usedPins('', candidate);
         const ok = validPins(this.deps.getChip());
         if (preferred != null && !used.has(preferred) && ok.includes(preferred)) return preferred;
         for (const p of ok) if (!used.has(p)) return p;
@@ -334,7 +341,8 @@ export class PerisPanel {
         details.querySelector('.dev-editor')?.remove();
         const editor = buildConfigEditor(devCfg, meta, {
             validPins: validPins(this.deps.getChip()),
-            usedPins: (id) => this.usedPins(id),
+            // pin options are candidate-aware: bus devices may share pins
+            usedPins: (id) => this.usedPins(id, meta),
             onChange: () => {
                 this.apply();
                 view?.setConfig?.(devCfg);
@@ -440,7 +448,7 @@ export class PerisPanel {
         const cfg = { ...normaliseConfig(meta, {}), id, type } as DeviceConfig;
         // pick a free pin for the first 'pin' schema field
         const pinField = (meta.configSchema || []).find((f) => f.type === 'pin');
-        if (pinField) (cfg as Record<string, unknown>)[pinField.key] = this.freePin(cfg[pinField.key] as number | undefined);
+        if (pinField) (cfg as Record<string, unknown>)[pinField.key] = this.freePin(cfg[pinField.key] as number | undefined, meta);
         this.config.devices.push(cfg);
         this.expanded.add(id);
         this.buildDeviceRow(cfg);
@@ -486,7 +494,8 @@ export class PerisPanel {
         const sel = document.createElement('select');
         sel.className = 'dev-chip-select';
         // same option source as the details editor — never fork this
-        fillPinOptions(sel, validPins(this.deps.getChip()), this.usedPins(devCfg.id), devCfg[key]);
+        fillPinOptions(sel, validPins(this.deps.getChip()),
+            this.usedPins(devCfg.id, this.registry?.meta(devCfg.type)), devCfg[key]);
         sel.addEventListener('change', () => {
             devCfg[key] = Number(sel.value);
             slot.replaceChildren(); // commit closes the editor

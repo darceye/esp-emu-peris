@@ -28,10 +28,28 @@ export interface DeviceCtx {
     readonly mmio: ChipMmio | null;
     /** Drive a pad input level; reaches guest reads and GPIO interrupts. */
     setPinInput(pin: number, high: boolean): void;
+    /**
+     * Sampling scheduler (M4): register a standing run_batch size for this
+     * device while it waits for bus activity (bus watch). Cheap-ish, no
+     * expiry — drop it with releaseSampling() (destroy).
+     */
+    armSampling(batch: number): void;
+    /**
+     * Sampling scheduler (M4): run fine-grained batches for the next
+     * `forCycles` emulator cycles so bit-banged edges survive between
+     * samples (gpio_state() is read once per run_batch). Renew while a
+     * transfer is in flight; the lease also drops when the CPU sleeps
+     * (emulator fast-forward — nothing to sample then, M0).
+     */
+    fineSampling(batch: number, forCycles: number): void;
+    /** Drop this device's scheduler leases (call from destroy()). */
+    releaseSampling(): void;
     /** Bus/MMIO read (little-endian), e.g. LEDC duty, RMT channel RAM. */
     readMem(addr: number, len: number): Uint8Array;
     readU32(addr: number): number;
     cycles(): number;
+    /** Emulator clock in cycles per µs (edge timing → real time units). */
+    readonly cyclesPerUs: number;
     /** Subscribe to PinState updates for the given pins. */
     subscribe(pins: number[]): void;
     unsubscribe(): void;
@@ -82,6 +100,12 @@ export interface DeviceMeta {
     readonly description?: string;
     readonly defaultConfig: Record<string, unknown>;
     readonly configSchema?: ConfigField[];
+    /**
+     * Bus devices (M4+): pins may overlap with OTHER sharedBus devices —
+     * an I2C slave pair sharing SCL/SDA is legal wiring, not a conflict.
+     * Default false: one device per GPIO, either direction.
+     */
+    readonly sharedBus?: boolean;
     /** GPIO pins the device claims (conflict detection). Required. */
     pins(cfg: DeviceConfig): number[];
     new (ctx: DeviceCtx, cfg: DeviceConfig): DeviceLike;

@@ -28,6 +28,8 @@ export class Device {          // 运行在 worker,与模拟器交互
         // checkbox 可加 chip:'pull' + pullWhenChecked:'high'|'low'
         //   → 设备行上显示 V/G 闲置电平徽章(点击翻转),详见下文"行式 UI 约定"
     ];
+    static sharedBus = true;          // 可选(M4):允许与其他 sharedBus 设备
+                                      //   共享引脚(总线接线,如两个 I2C 从机)
     static pins(cfg) { return [cfg.pin]; }   // 声明占用的 GPIO(用于冲突检测)
 
     constructor(ctx, cfg) {}          // cfg = { id, type, ...设备配置 }
@@ -83,6 +85,10 @@ export class View {             // 运行在页面,渲染设备视图
 | `ctx.subscribe(pins)` / `ctx.unsubscribe()` | 订阅引脚输出变化(onPinState) |
 | `ctx.readMem(addr, len)` / `ctx.readU32(addr)` | 总线/MMIO 读取(LEDC duty、RMT RAM 等) |
 | `ctx.cycles()` | 模拟器周期计数 |
+| `ctx.cyclesPerUs` | 模拟器时钟(周期/µs),边沿计时换算真实时间用 |
+| `ctx.armSampling(batch)` | M4 调度器:设备监视空闲总线期间的常设 run_batch 尺寸 |
+| `ctx.fineSampling(batch, forCycles)` | M4 调度器:接下来 `forCycles` 周期内用细批(传输期间持续续约);CPU 睡眠快进时自动失效 |
+| `ctx.releaseSampling()` | 释放本设备的调度器租约(destroy 时调用) |
 | `ctx.markDirty()` | 请求尽快把 getState() 推给页面 |
 | `ctx.log(text, level?)` | 在 UART 控制台打一条 `[Peris]` 日志 |
 
@@ -107,6 +113,13 @@ canvas 灯泡绘制 + 电平动画器):这类辅助模块放在 `peris/devices/`
 辅助函数已处理好的两个坑:通用编辑器的 `<select>` 回传**字符串**
 (`parseChannel` 接受 `'3'`,并防住 `Number(null)===0`);`idf.py merge-bin`
 的 `-o` 相对 build 目录(`tests/firmware/merge.ps1`)。
+
+M3 的 WS2812 插件遵循同一模式,共享库为 **`peris/devices/ws2812-lib.js`**
+(RMT 通道 RAM 读取、`CHnSTATUS` 发送忙门控、接线扫描、复位重同步+前置补零
+对齐的帧解码、LED 网格几何/绘制;通道解析与动画器直接从 ledc-lib 引入——
+同一语义只有一份实现)。其实测约束已在 UI 呈现:48 字通道 RAM 只保留帧的
+最后 46 位,长灯带只能解码出尾部 LED(见 FEASIBILITY.zh-cn.md
+"关键技术细节" 3–4)。
 
 ## 消息协议(页面 ↔ worker)
 
@@ -147,6 +160,34 @@ canvas 灯泡绘制 + 电平动画器):这类辅助模块放在 `peris/devices/`
    走 `host.updateConfig(patch)`——配置的唯一事实源在页面 PerisPanel,worker 侧
    不得缓存/改配置。不要在页面侧直接操作模拟器。
 
+## 位绑定协议设备(M4)
+
+CPU 驱动(位绑定)的波形**可以**出现在 `onPinState` 里——但
+`gpio_state()` 每个 run_batch 只采样一次,只有当批量远小于信号半周期时
+边沿才能全部存活。设备通过调度器(`src/core/scheduler.ts`)租用批量:
+
+- `ctx.armSampling(~1000)` 申请一次——总线空闲期间的常设警戒批(开销低,
+  足以分辨 ~20 kHz 总线上的 START);
+- 每个边沿到来时 `ctx.fineSampling(~300, forCycles)`——为传输的剩余部分
+  续约细批窗口;按周期预算到期,或模拟器快进穿越 CPU 睡眠时自动失效
+  (那时无可采样)。
+
+客户机内部的时序**不**按墙钟走(`esp_rom_delay_us` 只有名义值的 ~50%
+——FEASIBILITY.md §"M4 实测"),因此解码器必须基于电平或比值,绝不能
+用绝对微秒窗口。M4 插件同时遵循这两条:
+
+- `peris/devices/bitbang-i2c-slave.js` —— 两个位绑定 GPIO(SCL/SDA)上的
+  24C02 EEPROM / BME280 模型(`sharedBus` 允许多个从机共用这对线,
+  runtime 对共享焊盘的输入驱动做线与)。引擎、寄存器模型与逐位精确的
+  Bosch 补偿在 `peris/devices/i2c-lib.js`。从机经 SDA 输入路径应答——
+  主机把焊盘释放为输入期间才可见(开漏惯用法);从不释放的推挽主机无法
+  应答,不仿真时钟拉伸。
+- `peris/devices/ir-nec.js` —— 双路 NEC 捕获:位绑定 GPIO(细批窗口内
+  边沿→突发包络,静默 ~25 ms 后解码)或 RMT TX 通道(34 字的帧完整留在
+  发送后的通道 RAM 里;模拟器不实现 `APB_MEM_WADDR`(恒 0),发送中途
+  拼接不可行)。按比值解码;`source: auto` 优先 RMT 路由。包络组装与
+  解码在 `peris/devices/nec-lib.js`。
+
 ## 示例
 
 - `peris/devices/led.js` — 输出型设备(sigbus 订阅)
@@ -155,4 +196,10 @@ canvas 灯泡绘制 + 电平动画器):这类辅助模块放在 `peris/devices/`
 - `peris/devices/toggle-switch.js` — 保持型输入设备
 - `peris/devices/pwm-led.js` / `rgb-led.js` — 寄存器级设备
   (onBatch + ctx.mmio + ledc-lib 接线扫描/占空比解码,canvas 插值 View)
+- `peris/devices/ws2812.js` — 基于 RMT 通道 RAM 的寄存器级设备
+  (onBatch + ctx.mmio + ws2812-lib 帧解码,灯带/环形/矩阵 View)
+- `peris/devices/bitbang-i2c-slave.js` — 位绑定 I2C 从机(i2c-lib.js 引擎)
+- `peris/devices/ir-nec.js` — NEC 接收器,gpio + RMT 双路捕获(nec-lib.js)
 - `peris/devices/ledc-lib.js` — 共享辅助模块(不是设备)
+- `peris/devices/ws2812-lib.js` — 共享辅助模块(不是设备)
+- `peris/devices/i2c-lib.js` / `peris/devices/nec-lib.js` — 共享辅助模块(不是设备)

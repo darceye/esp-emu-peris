@@ -5,6 +5,9 @@
         { "module": "touch-button.js" },
         { "module": "toggle-switch.js" },
         { "module": "pwm-led.js" },
-        { "module": "rgb-led.js" }
+        { "module": "rgb-led.js" },
+        { "module": "ws2812.js" },
+        { "module": "bitbang-i2c-slave.js" },
+        { "module": "ir-nec.js" }
     ]
 }
