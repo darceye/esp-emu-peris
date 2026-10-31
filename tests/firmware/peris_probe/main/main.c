@@ -8,6 +8,13 @@
  *       While blinking, GPIO 3 is an input with a falling-edge ISR whose
  *       count is printed every half period — proves gpio_set_input() can
  *       drive pins *and* raise interrupts in the guest.
+ *   P1b digital-in sampling (2 s, one line every 125 ms): GPIO 0 carries
+ *       the toggle-switch level, GPIO 18 the touch pad (active-low, the
+ *       touch peripheral itself is not emulated), GPIO 3 reappears as a
+ *       plain level. The blink LED mirrors the switch so flipping it is
+ *       visible without the UART, and touch press edges (falling) are
+ *       counted — exercises the toggle-switch and touch-button devices
+ *       from an imported wiring config (examples/esp32c3-probe.json).
  *   P2  LEDC breathing on GPIO 9 (5 kHz / 13-bit duty ramp) — lets the
  *       probe check whether PWM is observable at the pad register and
  *       whether the LEDC duty registers track the requested duty.
@@ -48,6 +55,8 @@
 
 #define PIN_GPIO   8                       /* P1: plain blink            */
 #define PIN_BTN    3                       /* P1: driven input + ISR     */
+#define PIN_SWITCH 0                       /* P1b: toggle-switch level   */
+#define PIN_TOUCH  18                      /* P1b: touch pad, active-low */
 #define PIN_LEDC   9                       /* P2: LEDC PWM ch0           */
 #define PIN_LEDC1  6                       /* P2: LEDC PWM ch1           */
 #define PIN_LEDC2  7                       /* P2: LEDC PWM ch2           */
@@ -492,6 +501,19 @@ void app_main(void)
     ESP_ERROR_CHECK(gpio_config(&io));
     ESP_ERROR_CHECK(gpio_install_isr_service(0));
     ESP_ERROR_CHECK(gpio_isr_handler_add(PIN_BTN, btn_isr, NULL));
+    /* P1b digital inputs: GPIO0 idles low (switch off), GPIO18 idles high
+     * (touch pad released, active-low). The peripheral devices override
+     * the pad level while attached; the pulls only pin the undriven case. */
+    io.mode = GPIO_MODE_INPUT;
+    io.pin_bit_mask = 1ULL << PIN_SWITCH;
+    io.pull_up_en = GPIO_PULLUP_DISABLE;
+    io.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    io.intr_type = GPIO_INTR_DISABLE;
+    ESP_ERROR_CHECK(gpio_config(&io));
+    io.pin_bit_mask = 1ULL << PIN_TOUCH;
+    io.pull_up_en = GPIO_PULLUP_ENABLE;
+    io.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    ESP_ERROR_CHECK(gpio_config(&io));
 
     ledc_timer_config_t t = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
@@ -575,6 +597,27 @@ void app_main(void)
         }
         gpio_set_level(PIN_GPIO, 0);
         printf("###P1 end btn=%d\n", s_btn_count);
+
+        /* --- P1b: digital-in sampling (switch / touch / button level) ---
+         * Two seconds, one line per 125 ms: sw = toggle-switch level on
+         * GPIO0, btnlvl = the P1 button read as a level, tch = touch pad
+         * (active-low). The blink LED mirrors the switch (flipping it is
+         * visible without the UART) and touch press edges are counted. */
+        printf("###P1b start\n");
+        int last_tch = 1, touches = 0;
+        for (int i = 0; i < 16; i++) {
+            int sw = gpio_get_level(PIN_SWITCH);
+            int btnlvl = gpio_get_level(PIN_BTN);
+            int tch = gpio_get_level(PIN_TOUCH);
+            if (tch == 0 && last_tch == 1) touches++;
+            last_tch = tch;
+            gpio_set_level(PIN_GPIO, sw);      /* LED mirrors the switch */
+            printf("###P1b i=%d sw=%d btnlvl=%d tch=%d n=%d\n",
+                   i, sw, btnlvl, tch, touches);
+            vTaskDelay(pdMS_TO_TICKS(125));
+        }
+        gpio_set_level(PIN_GPIO, 0);
+        printf("###P1b end n=%d\n", touches);
 
         /* --- P2: duty ramp, then flat extremes for clean measurement --- */
         printf("###P2 start\n");

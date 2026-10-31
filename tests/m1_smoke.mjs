@@ -83,10 +83,12 @@ const check = (name, ok, detail = '') => {
 let uart = '';
 let uartScan = 0; // cumulative marker scan position
 let inP1 = false;
+let inP1b = false;
 let inP2 = false;
 let inP3 = false;
 let inP4 = false;
 const p3Colours = []; // logged colours of the P3 bursts (walk + grad marker)
+const p1bSamples = []; // { sw, tch, n } lines printed inside P1b
 const p4Lines = [];   // raw ###P4 lines (parsed by the S10/S11 sections)
 let batches = 0;      // scheduler batches executed (verbose phase tracing)
 let lastPhaseLine = ''; // most recent ### marker (bounded settles)
@@ -105,6 +107,11 @@ function trackMarkers() {
         // the firmware prints "###P1 end btn=N" — exact match never fired
         // and inP1 stuck true through whole rounds (a real M4 bug)
         else if (line.startsWith('###P1 end')) inP1 = false;
+        // P1b sampling lines: "###P1b i=N sw=S btnlvl=B tch=T n=K"
+        else if (line === '###P1b start') inP1b = true;
+        else if ((m = line.match(/^###P1b i=\d+ sw=([01]) btnlvl=[01] tch=([01]) n=(\d+)/)))
+            p1bSamples.push({ sw: +m[1], tch: +m[2], n: +m[3] });
+        else if (line.startsWith('###P1b end')) inP1b = false;
         else if (line === '###P2 start') inP2 = true;
         else if (line === '###P2 end') inP2 = false;
         else if (line === '###P3 start') inP3 = true;
@@ -135,6 +142,7 @@ await rt.applyConfig({
         { id: 'led-1', type: 'led', pin: 8, color: '#ff4d4d', name: 'L' },
         { id: 'btn-1', type: 'button', pin: 3, activeLow: true },
         { id: 'sw-1', type: 'toggle-switch', pin: 0, initial: false },
+        { id: 'tch-1', type: 'touch-button', pin: 18, activeLow: true },
         { id: 'pwm-1', type: 'pwm-led', channel: 'auto' },
         { id: 'rgb-1', type: 'rgb-led' },
         { id: 'ws-1', type: 'ws2812' },
@@ -145,10 +153,10 @@ await rt.applyConfig({
     ],
 });
 const ready1 = msgs.find((m) => m.type === 'peris_ready');
-check('S1 config applied (10 devices, I2C bus shared)',
-    ready1?.ok === true && ready1.devices.length === 10, ready1?.errors.join('; '));
+check('S1 config applied (11 devices, I2C bus shared)',
+    ready1?.ok === true && ready1.devices.length === 11, ready1?.errors.join('; '));
 check('S1 initial states pushed',
-    ['led-1', 'btn-1', 'sw-1', 'pwm-1', 'rgb-1', 'ws-1', 'ee-1', 'bme-1', 'ir-bb', 'ir-rmt']
+    ['led-1', 'btn-1', 'sw-1', 'tch-1', 'pwm-1', 'rgb-1', 'ws-1', 'ee-1', 'bme-1', 'ir-bb', 'ir-rmt']
         .every((id) => states().some((s) => s.id === id)));
 
 // S4: toggle switch drives pin level (GPIO0 input)
@@ -224,6 +232,51 @@ const anyCount = btnCounts.some((c) => c > 0);
 if (process.env.VERBOSE) console.log('DEBUG btnCounts:', btnCounts.join(','), 'made:', made, 'inP1:', inP1, 'uartLen:', uart.length);
 check('S3 button pulses reach guest ISR', anyCount && lastBtn >= 2,
     `${made} pulses, last btn=${lastBtn}`);
+
+// S4b: the P1b digital-in sampling phase follows P1 immediately — the
+// firmware reads the switch (GPIO0), the button level (GPIO3) and the
+// touch pad (GPIO18) via gpio_get_level() every 125 ms, mirrors the switch
+// on the blink LED and counts touch press edges. Flip the switch on at
+// entry / off mid-phase and press the touch pad twice while inside the
+// phase (marker-bounded; a hold of 20 batches ≈ 85 ms emulated straddles
+// several sample windows — the same cadence lesson as S3).
+for (let i = 0; i < 20000 && !inP1b; i++) {
+    uart += emu.run_batch(rt.batchSize(50000));
+    trackMarkers();
+    rt.onBatchEnd();
+    batches++;
+}
+rt.command('sw-1', 'set', { on: true });
+let tchLeft = 2, tchHold = 0, tchMade = 0;
+let ledOn = false, ledOff = false;
+for (let i = 0; i < 30000 && inP1b; i++) {
+    uart += emu.run_batch(rt.batchSize(50000));
+    trackMarkers();
+    rt.onBatchEnd();
+    batches++;
+    if (i === 150) rt.command('sw-1', 'set', { on: false });
+    if (tchLeft > 0 && i % 60 === 0) {
+        rt.command('tch-1', 'press');
+        tchHold = 20;
+        tchLeft--; tchMade++;
+    } else if (tchHold > 0 && --tchHold === 0) {
+        rt.command('tch-1', 'release');
+    }
+    if (i % 10 === 0) {
+        rt.flushStates(true);
+        const ls = states().filter((m) => m.id === 'led-1');
+        ledOn ||= ls.some((m) => m.state.on === true);
+        ledOff ||= ls.some((m) => m.state.on === false);
+    }
+}
+check('S4b switch level reaches guest gpio_get_level',
+    p1bSamples.some((s) => s.sw === 1) && p1bSamples.some((s) => s.sw === 0),
+    `${p1bSamples.length} samples, sw=1 in ${p1bSamples.filter((s) => s.sw === 1).length}`);
+check('S4b touch presses counted by guest',
+    p1bSamples.some((s) => s.n >= 1) && p1bSamples.some((s) => s.tch === 0),
+    `${tchMade} presses, max n=${p1bSamples.length ? Math.max(...p1bSamples.map((s) => s.n)) : 0}`);
+check('S4b blink LED mirrors the switch',
+    ledOn && ledOff, `on=${ledOn} off=${ledOff}`);
 
 // S7/S8: advance into the next P2 (LEDC) phase. The firmware wires
 // ch0→GPIO9, ch1→GPIO6, ch2→GPIO7 at boot and drives them inside P2:

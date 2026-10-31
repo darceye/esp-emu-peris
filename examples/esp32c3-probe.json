@@ -2,9 +2,16 @@
     "perisVersion": 1,
     "chip": "esp32c3",
     "devices": [
-        { "id": "led-1", "type": "led", "name": "Blink LED (GPIO8)", "pin": 8, "color": "#ff4d4d", "invert": false },
-        { "id": "btn-1", "type": "button", "name": "Probe button (GPIO3, ISR)", "pin": 3, "activeLow": true },
-        { "id": "pwm-1", "type": "pwm-led", "name": "Breathing LED (LEDC ch0)", "channel": "auto", "color": "#ffb340" },
-        { "id": "rgb-1", "type": "rgb-led", "name": "RGB LED (LEDC ch0/1/2)", "channelR": "auto", "channelG": "auto", "channelB": "auto" }
+        { "id": "led-1",   "type": "led",                "name": "Blink LED (GPIO8, mirrors the switch in P1b)", "pin": 8, "color": "#ff4d4d", "invert": false },
+        { "id": "btn-1",   "type": "button",             "name": "Probe button (GPIO3, ISR + level)", "pin": 3, "activeLow": true },
+        { "id": "sw-1",    "type": "toggle-switch",      "name": "Switch (GPIO0, sampled in P1b)", "pin": 0, "activeLow": false, "initial": false },
+        { "id": "tch-1",   "type": "touch-button",       "name": "Touch pad (GPIO18, counted in P1b)", "pin": 18, "activeLow": true },
+        { "id": "pwm-1",   "type": "pwm-led",            "name": "Breathing LED (LEDC ch0)", "channel": "auto", "color": "#ffb340" },
+        { "id": "rgb-1",   "type": "rgb-led",            "name": "RGB LED (LEDC ch0/1/2)", "channelR": "auto", "channelG": "auto", "channelB": "auto" },
+        { "id": "ws-1",    "type": "ws2812",             "name": "WS2812 strip (RMT ch0, 8 LEDs)", "channel": "auto", "count": 8 },
+        { "id": "ee-1",    "type": "bitbang-i2c-slave",  "name": "24C02 EEPROM (I2C 0x50)", "model": "eeprom24c02", "scl": 1, "sda": 2, "address": 80 },
+        { "id": "bme-1",   "type": "bitbang-i2c-slave",  "name": "BME280 sensor (I2C 0x76)", "model": "bme280", "scl": 1, "sda": 2, "address": 118 },
+        { "id": "ir-bb",   "type": "ir-nec",             "name": "IR NEC, bit-bang capture (GPIO5)", "pin": 5, "source": "gpio" },
+        { "id": "ir-rmt",  "type": "ir-nec",             "name": "IR NEC, RMT capture (ch1)", "pin": 10, "source": "rmt", "channel": 1 }
     ]
 }

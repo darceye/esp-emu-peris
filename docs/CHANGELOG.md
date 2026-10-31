@@ -8,6 +8,25 @@ CHANGELOG.zh-cn.md).
 Rules: major = breaking protocol/architecture change; minor = new capability;
 patch = fixes and small changes.
 
+## peris 0.8.1
+
+- **Test firmware P1b** (digital-in sampling): every round now samples the
+  toggle-switch level (GPIO0), the button level (GPIO3) and the touch pad
+  (GPIO18, active-low) via `gpio_get_level()` for 2 s — one `###P1b` line
+  every 125 ms — mirrors the switch on the blink LED and counts touch press
+  edges. The toggle-switch and touch-button devices (plain GPIO drivers; the
+  touch peripheral itself is not emulated) are now exercised by the probe
+  firmware too.
+- **`examples/esp32c3-probe.json` now covers every device**: the importable
+  wiring config grew from 4 to 11 devices matching the firmware pins (LED,
+  button, switch, touch pad, PWM LED, RGB LED, WS2812 strip, 24C02 + BME280
+  on the shared I2C bus, IR NEC gpio + RMT capture). Load
+  `tests/firmware/peris_probe/build/merged-binary.bin`, import the example
+  and each firmware phase exercises its peripherals.
+- Smoke: new S4b checks (switch level reaches the guest, touch presses
+  counted, LED mirrors the switch) bounded by the `###P1b` markers; the
+  smoke config carries 11 devices.
+
 ## peris 0.8.0 (M4)
 
 - **Fine-grained sampling scheduler** (`src/core/scheduler.ts`): run_batch

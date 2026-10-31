@@ -171,12 +171,13 @@ and `docs/FEASIBILITY.md` (M0 measurements).
   `tests/unit/protocol.test.mjs` (protocol engines) and add level/state
   semantics cases.
 - **Integration smoke** `tests/m1_smoke.mjs`: real wasm + firmware + runtime +
-  devices (S1–S6 GPIO devices, S7/S8 LEDC register-level devices driven by
-  the `###P2` markers, S9 ws2812 by `###P3`, S10/S11 the M4 I2C+IR devices by
-  `###P4`). **Timing lessons**:
+  devices (S1–S6 GPIO devices — S4b drives the `###P1b` digital-in sampling:
+  switch/touch/button levels read back by the guest plus the LED mirror,
+  S7/S8 LEDC register-level devices driven by the `###P2` markers, S9 ws2812
+  by `###P3`, S10/S11 the M4 I2C+IR devices by `###P4`). **Timing lessons**:
   - **drive by UART markers, never batch counts** — with M4 leases standing
     a sleep batch fast-forwards ~680k cycles, and a batch-count window
-    overshoots whole rounds (the firmware prints `###P1..P4 start/end` and
+    overshoots whole rounds (the firmware prints `###P1/P1b..P4 start/end` and
     `###ROUND`, see `tests/firmware/peris_probe/main/main.c`);
   - match markers with `startsWith` when the firmware appends data —
     `###P1 end btn=N` once broke an exact-match flag;

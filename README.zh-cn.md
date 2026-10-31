@@ -17,7 +17,8 @@ peris/
                         + bitbang-i2c-slave(24C02/BME280,i2c-lib.js)+ ir-nec(NEC 接收,
                           nec-lib.js;两者都依托 M4 细批采样调度器)
   vendor/ peris.css     xterm 本地化 + 面板样式
-examples/               接线配置示例(JSON,可直接 Import)
+examples/               接线配置示例(JSON,可直接 Import;esp32c3-probe.json
+                        按探针固件引脚接线全部 11 个设备——导入即可测遍外设)
 tests/unit/             单元测试(node:test)
 tests/m1_smoke.mjs      集成冒烟(真实 wasm+固件全链路)
 tests/m0_probe.mjs      模拟器能力探针(上游升级时先跑)
@@ -110,11 +111,14 @@ npm test                     # 单元测试 + 集成冒烟(见 docs/ARCHITECTURE
 npm run test:m0              # 模拟器能力探针(上游升级时先跑)
 ```
 
-固件四阶段循环:GPIO8 闪烁 / GPIO9+GPIO6+GPIO7 上 LEDC 呼吸(ch0 渐变、
-ch1 反向、ch2 恒半占空比)/ GPIO4 RMT-WS2812 发帧 / SCL=GPIO1+SDA=GPIO2
-上 ~20 kHz soft-I2C 主机(24C02 + BME280 事务,BME 补偿逐位交叉验证)
-加 GPIO5 位绑定与 GPIO10 RMT ch1 两路 NEC 红外码——并配合 GPIO3 输入
-中断计数,用于端到端验证。
+固件五阶段循环:GPIO8 闪烁 / 数字输入采样(`###P1b`:GPIO0 拨动开关电平、
+GPIO18 触摸板、GPIO3 按键电平,每 125 ms 一行,LED 镜像开关,触摸沿计数)/
+GPIO9+GPIO6+GPIO7 上 LEDC 呼吸(ch0 渐变、ch1 反向、ch2 恒半占空比)/
+GPIO4 RMT-WS2812 发帧 / SCL=GPIO1+SDA=GPIO2 上 ~20 kHz soft-I2C 主机
+(24C02 + BME280 事务,BME 补偿逐位交叉验证)加 GPIO5 位绑定与 GPIO10
+RMT ch1 两路 NEC 红外码——并配合 GPIO3 输入中断计数,用于端到端验证。
+加载合并镜像后导入 `examples/esp32c3-probe.json`(按上述引脚接线全部 11
+个设备),每个阶段都会驱动到对应外设。
 
 注:页面自身不依赖任何 CDN——xterm/xterm-addon-fit 已本地化到
 `peris/vendor/`(取自 npm 包的非压缩构建),离线可用。

@@ -20,7 +20,9 @@ peris/
                         + bitbang-i2c-slave (24C02/BME280, i2c-lib.js) + ir-nec (NEC receiver,
                         nec-lib.js; both ride the M4 fine-batch sampling scheduler)
   vendor/ peris.css     vendored xterm + panel styles
-examples/               wiring-config examples (JSON, directly importable)
+examples/               wiring-config examples (JSON, directly importable;
+                        esp32c3-probe.json wires all 11 devices to the probe
+                        firmware pins — import it to test every peripheral)
 tests/unit/             unit tests (node:test)
 tests/m1_smoke.mjs      integration smoke test (real wasm + firmware, full chain)
 tests/m0_probe.mjs      emulator capability probe (run first on upstream upgrades)
@@ -120,12 +122,16 @@ npm test                     # unit + integration smoke (test layering in docs/A
 npm run test:m0              # emulator capability probe (run first on upstream upgrades)
 ```
 
-The firmware runs a four-phase loop: GPIO8 blink / LEDC breathing on
-GPIO9+GPIO6+GPIO7 (ch0 ramps, ch1 mirrors down, ch2 holds half duty) /
-GPIO4 RMT-WS2812 frames / a ~20 kHz soft-I2C master on SCL=GPIO1+SDA=GPIO2
-(24C02 + BME280 transactions, BME compensation cross-checked bit-exactly)
-plus NEC IR codes bit-banged on GPIO5 and sent via RMT ch1 on GPIO10 —
-plus GPIO3 input-interrupt counting, for end-to-end verification.
+The firmware runs a five-phase loop: GPIO8 blink / digital-in sampling
+(`###P1b`: toggle-switch level on GPIO0, touch pad on GPIO18, button level on
+GPIO3, one line per 125 ms, LED mirrors the switch, touch edges counted) /
+LEDC breathing on GPIO9+GPIO6+GPIO7 (ch0 ramps, ch1 mirrors down, ch2 holds
+half duty) / GPIO4 RMT-WS2812 frames / a ~20 kHz soft-I2C master on
+SCL=GPIO1+SDA=GPIO2 (24C02 + BME280 transactions, BME compensation
+cross-checked bit-exactly) plus NEC IR codes bit-banged on GPIO5 and sent via
+RMT ch1 on GPIO10 — plus GPIO3 input-interrupt counting, for end-to-end
+verification. Import `examples/esp32c3-probe.json` (wires all 11 devices to
+those pins) after loading the merged image to exercise every peripheral.
 
 Note: the page itself has no CDN dependency — xterm/xterm-addon-fit are
 vendored into `peris/vendor/` (unminified npm builds), so it works offline.

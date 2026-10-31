@@ -134,11 +134,12 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
   改 core/devices 必跑;新增设备按类型仿照 `tests/unit/devices.test.mjs`
   (GPIO 语义)或 `tests/unit/protocol.test.mjs`(协议引擎)补用例。
 - **集成冒烟** `tests/m1_smoke.mjs`:真实 wasm+固件+runtime+设备
-  (S1–S6 GPIO 设备,S7/S8 LEDC 寄存器级设备按 `###P2` 标记驱动,S9
-  ws2812 按 `###P3`,S10/S11 为 M4 的 I2C+IR 设备按 `###P4`)。
-  **时序经验**:
+  (S1–S6 GPIO 设备——其中 S4b 驱动 `###P1b` 数字输入采样:开关/触摸/
+  按键电平被客户机读回并镜像到 LED,S7/S8 LEDC 寄存器级设备按 `###P2`
+  标记驱动,S9 ws2812 按 `###P3`,S10/S11 为 M4 的 I2C+IR 设备按
+  `###P4`)。**时序经验**:
   - **按 UART 标记驱动,永不按批数**——M4 租约常设时一个睡眠批次快进
-    ~68 万周期,按批数的窗口会跑过整轮(固件打印 `###P1..P4 start/end`
+    ~68 万周期,按批数的窗口会跑过整轮(固件打印 `###P1/P1b..P4 start/end`
     与 `###ROUND`,见 `tests/firmware/peris_probe/main/main.c`);
   - 固件在标记后追加数据时用 `startsWith` 匹配——`###P1 end btn=N` 曾
     让全等匹配失效;
