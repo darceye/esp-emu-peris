@@ -104,6 +104,12 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
    与测试共用)。总线设备声明 `static sharedBus = true`;runtime 对共享焊盘
    的输入驱动做线与(gpio_set_input 是单赢家电平写——两个从机引擎否则会
    互相覆盖 ACK 拉低,真实 M4 缺陷)。
+11. **View 可以持有行以外的 DOM**(逻辑分析仪的浮动窗口挂在
+   `document.body` 上、`position: fixed`,刻意非模态——绝不加遮罩)。此类
+   View 必须实现 `destroy()`(面板在行移除与列表重建时调用),多引脚选择
+   器必须基于 `host.pinInfo()` 构建——与通用编辑器同一份、按候选设备感知
+   的引脚集合,禁止另抄一份。`ctx.pinLevel(pin)` 只用于快照式读取当前驱动
+   电平;变化流仍然走 `onPinState`。
 
 ## 4. 曾踩过的 bug(防止回潮)
 
@@ -123,6 +129,7 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
 | 同总线两个 I2C 从机每笔事务都 NACK(M4) | gpio_set_input 是单赢家电平写;共享总线焊盘需要 runtime 的线与仲裁(`sharedBus` 元数据) |
 | 引擎从不应答读方向地址字节(M4,单测抓出) | ACK 决定属于**刚完成的字节**(`ackThisByte`),不能按(已切换的)phase 判断 |
 | C 补偿与 JS 模型只在气压上分歧(M4) | dig_P1 在 Bosch 布局里是 uint16;36477 在 int16 回绕成负——靠冒烟测试保持 C/JS 逐位一致 |
+| 逻辑分析仪弹窗打开后是空的(0.10.0 GUI 冒烟):构造中途一个漏写 `this.` 的 `trigSel` 抛错,半成品窗口留在屏上 | 单元测试从不执行 View 的 DOM 代码——构建弹窗的插件要用带 `window.addEventListener('error')` 陷阱的 GUI 冒测;`setPointerCapture` 还要 try/catch(合成/自动化的指针事件没有活跃指针 id,会抛 NotFoundError 直接弄死拖动) |
 
 ## 5. 测试与验证约定
 
@@ -137,7 +144,12 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
   (S1–S6 GPIO 设备——其中 S4b 驱动 `###P1b` 数字输入采样:开关/触摸/
   按键电平被客户机读回并镜像到 LED,S7/S8 LEDC 寄存器级设备按 `###P2`
   标记驱动,S9 ws2812 按 `###P3`,S10/S11 为 M4 的 I2C+IR 设备按
-  `###P4`)。**时序经验**:
+  `###P4`,S13 逻辑分析仪在 P4 软 I2C 总线上武装捕获(SCL/SDA 与 i2c
+  从机合法共享);S12 为**本机可选用例**:在第二个模拟器实例里启动 gun 0.1.0
+  发布件——真实 ESP32-S3 固件,无延时位绑定驱动 MAX7219——
+  `D:/d3/_git/gun_flag_monster/gun/release/0.1.0/gun-0.1.0-merged.bin`
+  缺失时打印提示跳过;gun 项目是只读参考,绝不可改动,且其后续版本改用
+  硬件 SPI(按 M0 不可见))。**时序经验**:
   - **按 UART 标记驱动,永不按批数**——M4 租约常设时一个睡眠批次快进
     ~68 万周期,按批数的窗口会跑过整轮(固件打印 `###P1/P1b..P4 start/end`
     与 `###ROUND`,见 `tests/firmware/peris_probe/main/main.c`);

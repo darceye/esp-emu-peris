@@ -26,14 +26,26 @@
  *      bit-banged 38 kHz on GPIO5 (envelope from fine-batch edges) and
  *      carrier-less RMT ch1 symbols on GPIO10 (post-TX channel RAM),
  *      including repeat frames (M4)
+ *   S12 max7219 on real-world firmware (optional, machine-local): the gun
+ *      0.1.0 release (ESP32-S3, delay-free bit-bang DI=21/CLK=13/LOAD=14 —
+ *      the tightest real pulses the scheduler must resolve; later releases
+ *      moved to hardware SPI, which gpio_state cannot see, M0) boots through
+ *      display_init()'s 14-word init sequence; the device must decode every
+ *      frame with zero misalignment drops, then follow the control task's
+ *      value pushes. Skipped with a notice when the binary is absent.
+ *   S13 logic-analyzer: armed for a 40 ms guest window on the P4 soft-I2C
+ *      bus (SCL=GPIO1 + SDA=GPIO2, pads legally shared with the two i2c
+ *      slaves — a probe taps, it never drives). The ~20 kHz clock must land
+ *      as alternating SCL edges inside the window, the buffer must freeze
+ *      when the window closes and stay frozen afterwards.
  *
  * Batches run through rt.batchSize(50000): the M4 scheduler shrinks them
- * while the i2c/ir devices hold sampling leases, so loop caps are generous
- * rather than marker-exact (the firmware prints ###P1..P4 markers).
+ * while the i2c/ir/max7219 devices hold sampling leases, so loop caps are
+ * generous rather than marker-exact (the firmware prints ###P1..P4 markers).
  *
  * Usage: node tests/m1_smoke.mjs [merged-firmware.bin]
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -48,7 +60,7 @@ initSync(readFileSync(path.join(WWW, 'pkg/esp_emu_bg.wasm')));
 
 const { PerisRuntime } = await import(pathToFileURL(path.join(REPO, 'build/core/runtime.js')).href);
 const devices = {};
-for (const m of ['led', 'button', 'touch-button', 'toggle-switch', 'pwm-led', 'rgb-led', 'ws2812', 'bitbang-i2c-slave', 'ir-nec']) {
+for (const m of ['led', 'button', 'touch-button', 'toggle-switch', 'pwm-led', 'rgb-led', 'ws2812', 'bitbang-i2c-slave', 'ir-nec', 'max7219', 'logic-analyzer']) {
     devices[m] = await import(pathToFileURL(path.join(REPO, `peris/devices/${m}.js`)).href);
 }
 const i2cLib = await import(pathToFileURL(path.join(REPO, 'peris/devices/i2c-lib.js')).href);
@@ -150,13 +162,14 @@ await rt.applyConfig({
         { id: 'bme-1', type: 'bitbang-i2c-slave', model: 'bme280', scl: 1, sda: 2, address: 0x76 },
         { id: 'ir-bb', type: 'ir-nec', pin: 5, source: 'gpio' },
         { id: 'ir-rmt', type: 'ir-nec', pin: 10, source: 'rmt', channel: 1 },
+        { id: 'la-1', type: 'logic-analyzer', pins: [1, 2], durationMs: 40, name: 'I2C bus LA' },
     ],
 });
 const ready1 = msgs.find((m) => m.type === 'peris_ready');
-check('S1 config applied (11 devices, I2C bus shared)',
-    ready1?.ok === true && ready1.devices.length === 11, ready1?.errors.join('; '));
+check('S1 config applied (12 devices, I2C bus shared)',
+    ready1?.ok === true && ready1.devices.length === 12, ready1?.errors.join('; '));
 check('S1 initial states pushed',
-    ['led-1', 'btn-1', 'sw-1', 'tch-1', 'pwm-1', 'rgb-1', 'ws-1', 'ee-1', 'bme-1', 'ir-bb', 'ir-rmt']
+    ['led-1', 'btn-1', 'sw-1', 'tch-1', 'pwm-1', 'rgb-1', 'ws-1', 'ee-1', 'bme-1', 'ir-bb', 'ir-rmt', 'la-1']
         .every((id) => states().some((s) => s.id === id)));
 
 // S4: toggle switch drives pin level (GPIO0 input)
@@ -383,6 +396,11 @@ for (let i = 0; i < 100000 && !inP4; i++) {
     batches++;
 }
 check('S10/S11 reached the P4 phase', inP4);
+// S13: arm the logic analyzer on the soft-I2C bus right at phase entry —
+// an immediate 40 ms guest window overlaps the eeprom transaction, whose
+// ~20 kHz clock must survive as fine-sampled edges (the LA holds a fine
+// lease while recording; the i2c slaves' leases cover the same transfer)
+rt.command('la-1', 'arm');
 msgs.length = 0;
 rt.flushStates(true);
 for (let i = 0; i < 2000000 && inP4; i++) {
@@ -475,6 +493,52 @@ check('S11 ir-nec rmt capture: 2 codes + repeat from channel RAM',
     && (rmtLast?.log || []).some((f) => !f.repeat && f.addr === 0xff && f.cmd === 0x22 && f.repeats >= 1),
     `count=${rmtLast?.count} log=${JSON.stringify(rmtLast?.log?.map((f) => [f.addr?.toString(16), f.cmd?.toString(16), f.valid, f.repeats]))}`);
 
+// ---- S13: logic analyzer ---------------------------------------------------
+
+const laStates = states().filter((s) => s.id === 'la-1').map((s) => s.state);
+const laLast = laStates[laStates.length - 1];
+if (process.env.VERBOSE) {
+    console.log('DEBUG la last:', laLast?.status, 'counts:', JSON.stringify(laLast?.counts),
+        'capturedUs:', laLast?.capturedUs, 'initial:', JSON.stringify(laLast?.initial));
+}
+const scl = laLast?.edges?.[0] ?? [];
+// consecutive recorded levels may legitimately repeat: the firmware emulates
+// open-drain by flipping DIRECTION (oe), and an oe-only change records a Z
+// between two identical drives. What must hold: every level CHANGE is a real
+// edge (no two equal driven levels back-to-back without a Z between), times
+// never go backwards, and everything stays inside the window.
+const seq = laLast?.initial?.[0] == null ? [] : [laLast.initial[0]];
+for (let k = 1; k < scl.length; k += 2) seq.push(scl[k]);
+let alternating = seq.length >= 4;
+for (let k = 1; k < seq.length; k++) {
+    if (seq[k] === seq[k - 1] && seq[k] !== -1) alternating = false;
+}
+let ascending = scl.length >= 4;
+for (let k = 2; k < scl.length; k += 2) if (scl[k] < scl[k - 2]) ascending = false;
+const inWindow = scl.length >= 2 && scl[scl.length - 2] <= (laLast?.capturedUs ?? 0) + 1;
+check('S13 logic analyzer captured the soft-I2C bus (SCL+SDA edges)',
+    laLast?.status === 'done' && !laLast?.overflow
+    && JSON.stringify(laLast?.channels) === JSON.stringify([1, 2])
+    && (laLast?.counts?.[0] ?? 0) > 20 && (laLast?.counts?.[1] ?? 0) > 5,
+    `SCL ${laLast?.counts?.[0] ?? 0} edges, SDA ${laLast?.counts?.[1] ?? 0}, captured ${laLast?.capturedUs?.toFixed(0)} µs`);
+check('S13 SCL waveform is sane (real edges, ascending in-window times)',
+    alternating && ascending && inWindow,
+    `alt=${alternating} asc=${ascending} win=${inWindow} initial=${JSON.stringify(laLast?.initial?.[0])}`
+    + ` first ${JSON.stringify(scl.slice(0, 6))} last t=${scl.length ? scl[scl.length - 2].toFixed(1) : '-'} µs`);
+// the buffer must stay frozen once done
+const frozenAt = laLast?.totalEdges;
+for (let i = 0; i < 500; i++) {
+    uart += emu.run_batch(rt.batchSize(50000));
+    trackMarkers();
+    rt.onBatchEnd();
+    batches++;
+}
+rt.flushStates(true);
+const laAfter = states().filter((s) => s.id === 'la-1').pop()?.state;
+check('S13 capture frozen after the window closed',
+    laAfter?.status === 'done' && laAfter?.totalEdges === frozenAt,
+    `edges ${frozenAt} → ${laAfter?.totalEdges}`);
+
 // S5: conflict rejected
 msgs.length = 0;
 await rt.applyConfig({
@@ -521,6 +585,73 @@ msgs.length = 0;
 await rt.applyConfig({ perisVersion: 1, devices: [{ id: 'x', type: 'nope', pin: 1 }] });
 const ready3 = msgs.find((m) => m.type === 'peris_ready');
 check('S6 unknown type rejected', ready3?.ok === false && ready3.errors.some((e) => e.includes('unknown type')));
+
+// ---- S12: MAX7219 against real-world firmware (separate emulator) --------
+//
+// The gun 0.1.0 release (ESP32-S3) drives its 7-segment display through a
+// firmware bit-bang transport with NO inter-write delays (DIN=21, CLK=13,
+// LOAD=14) — the tightest real-world pulses the M4 scheduler must resolve
+// (edges ~20 instructions apart; the max7219 lease sizes derive from it).
+// Later gun releases moved to hardware SPI, which gpio_state cannot see
+// (M0). Boot expectations: display_init() writes shutdown 0, test 0,
+// decode 0xFF (Code B), scan-limit 7, intensity 4, eight blank digits,
+// shutdown 1 — 14 register words, then the control task pushes values
+// once WiFi is up (display_show → display_tick → non-zero digits).
+const GUN_FW = 'D:/d3/_git/esp_proj/gun_flag_monster/gun/release/0.1.0/gun-0.1.0-merged.bin';
+if (existsSync(GUN_FW)) {
+    const emu2 = new WasmEmulator('esp32s3');
+    if (emu2.has_default_rom()) emu2.load_default_rom();
+    emu2.set_boot_from_rom(true);
+    emu2.load_firmware(new Uint8Array(readFileSync(GUN_FW)));
+    const msgs2 = [];
+    const rt2 = new PerisRuntime();
+    rt2.post = (m) => msgs2.push(m);
+    rt2.registry = registry;
+    rt2.attachEmu(emu2, 'esp32s3');
+    await rt2.applyConfig({
+        perisVersion: 1,
+        devices: [{ id: 'mx-1', type: 'max7219', din: 21, clk: 13, load: 14, name: 'Gun display' }],
+    });
+    const mxStates = () => msgs2.filter((m) => m.type === 'peris_state' && m.id === 'mx-1').map((m) => m.state);
+    const lastState = () => {
+        const ss = mxStates();
+        return ss.length ? ss[ss.length - 1] : null;
+    };
+    const run2 = (n, done) => {
+        for (let i = 0; i < n; i++) {
+            emu2.run_batch(rt2.batchSize(50000));
+            rt2.onBatchEnd();
+            if (i % 200 === 0) {
+                rt2.flushStates(true);
+                if (done(lastState())) return true;
+            }
+        }
+        rt2.flushStates(true);
+        return done(lastState());
+    };
+    // boot: display_init's 14 words land around 7.2M emulated cycles
+    const booted = run2(400000, (st) => st && st.frames >= 14 && st.shutdown === false);
+    let mxLast = lastState();
+    // value traffic once the control task runs (WiFi bring-up first)
+    let sawValue = false;
+    if (booted) sawValue = run2(600000, (st) => st && st.digits.some((d) => d !== 0));
+    mxLast = lastState();
+    if (process.env.VERBOSE) {
+        console.log('DEBUG S12 final state:', JSON.stringify(mxLast));
+    }
+    check('S12 gun 0.1.0: display_init decoded (Code B, scan 8, intensity 4, running)',
+        booted && mxLast?.decodeMode === 0xff && mxLast?.scanLimit === 7
+        && mxLast?.intensity === 4 && mxLast?.shutdown === false,
+        `frames=${mxLast?.frames}`);
+    check('S12 gun 0.1.0: every frame aligned (no sampling drops)',
+        mxLast != null && mxLast.frames >= 14 && mxLast.dropped === 0,
+        `frames=${mxLast?.frames} dropped=${mxLast?.dropped}`);
+    check('S12 gun 0.1.0: control task pushed display values', sawValue
+        && mxLast?.digits?.some((d) => d !== 0),
+        `digits=${JSON.stringify(mxLast?.digits?.map((d) => d.toString(16)))}`);
+} else {
+    console.log('SKIP  S12 (gun 0.1.0 firmware not present on this machine)');
+}
 
 const failed = results.filter((r) => !r.ok);
 console.log(failed.length ? `\n${failed.length} FAILED` : '\nALL PASS');

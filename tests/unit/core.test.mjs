@@ -71,6 +71,17 @@ test('sigbus setInput forwards to emulator', () => {
     assert.deepEqual(emu.inputs, [[4, false], [4, true]]);
 });
 
+test('sigbus pinLevel reads the driven level, null when released', () => {
+    // pin8 driven high, pin9 driven low, pin33 driven high (word 1), pin4 released
+    const emu = new FakeEmu([(1 << 8), (1 << 1), (1 << 8) | (1 << 9), (1 << 1)]);
+    const bus = new Sigbus(emu);
+    assert.equal(bus.pinLevel(8), true);
+    assert.equal(bus.pinLevel(9), false);
+    assert.equal(bus.pinLevel(33), true);
+    assert.equal(bus.pinLevel(4), null, 'oe clear → released, level unknowable');
+    assert.equal(new Sigbus(null).pinLevel(8), null, 'no emulator attached');
+});
+
 // ---- chips ----
 
 test('chips tables: counts, absent pins, valid pins', () => {

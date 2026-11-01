@@ -12,6 +12,7 @@
         { "id": "ee-1",    "type": "bitbang-i2c-slave",  "name": "24C02 EEPROM (I2C 0x50)", "model": "eeprom24c02", "scl": 1, "sda": 2, "address": 80 },
         { "id": "bme-1",   "type": "bitbang-i2c-slave",  "name": "BME280 sensor (I2C 0x76)", "model": "bme280", "scl": 1, "sda": 2, "address": 118 },
         { "id": "ir-bb",   "type": "ir-nec",             "name": "IR NEC, bit-bang capture (GPIO5)", "pin": 5, "source": "gpio" },
-        { "id": "ir-rmt",  "type": "ir-nec",             "name": "IR NEC, RMT capture (ch1)", "pin": 10, "source": "rmt", "channel": 1 }
+        { "id": "ir-rmt",  "type": "ir-nec",             "name": "IR NEC, RMT capture (ch1)", "pin": 10, "source": "rmt", "channel": 1 },
+        { "id": "la-1",    "type": "logic-analyzer",     "name": "I2C bus LA (SCL+SDA)", "pins": [1, 2], "durationMs": 40, "trigCh": -1 }
     ]
 }

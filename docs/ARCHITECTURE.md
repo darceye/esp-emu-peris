@@ -69,7 +69,11 @@
   is always delivered** (otherwise a final state resting inside the window
   would be dropped).
 - **Page → device**: View `sendCmd()` → `peris_command` → `runtime.command()` →
-  `onCommand`.
+  `onCommand`. Views may own page-side DOM beyond their row (the
+  logic-analyzer floating window is `position: fixed` on `document.body`,
+  non-modal by design — no backdrop, so the rest of the page keeps every
+  pointer event); the panel calls the optional `View.destroy()` on row
+  removal and list rebuilds so such DOM cannot outlive its device.
 - **Input pin levels**: the only writers are `ctx.setPinInput` (devices) and
   the Debug grid's `gpio_input`. The page-side `gpioInputLevels[]` is only the
   Debug grid's own mirror, not authoritative state; the authority lives in the
@@ -123,7 +127,14 @@ details & config editing, drag sorting, firmware load, LED toggling while
 running, PWM/RGB LED auto-binding to the firmware's LEDC channels with smooth
 breathing during the P2 phase, the I2C transaction log filling during P4 with
 the EEPROM hex dump editable from the View, IR codes appearing on both
-ir-nec rows, config import/export round-trip; browser automation to be
+ir-nec rows, logic-analyzer: add one, pick channels from the GPIO grid in
+the floating window (occupied pins greyed), arm + waveform rendering while
+the P4 soft-I2C bus runs, window drag/resize with the page underneath
+still interactive, Saleae-style plot checks (wheel zoom at the cursor,
+drag pan, hover measurement shows pulse/period/frequency/duty, two clicks
+drop A/B cursors with Δt + 1/Δt, double-click re-fits), window closes
+when the row is removed, config
+import/export round-trip; browser automation to be
 introduced with Playwright once the network allows —
 `PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright`).
 

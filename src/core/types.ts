@@ -47,6 +47,12 @@ export interface DeviceCtx {
     /** Bus/MMIO read (little-endian), e.g. LEDC duty, RMT channel RAM. */
     readMem(addr: number, len: number): Uint8Array;
     readU32(addr: number): number;
+    /**
+     * Current driven level of one pad straight from gpio_state(): true/false
+     * while the guest drives it (oe), null when released. One wasm read —
+     * snapshot channels sparingly (capture start), never per batch.
+     */
+    pinLevel(pin: number): boolean | null;
     cycles(): number;
     /** Emulator clock in cycles per µs (edge timing → real time units). */
     readonly cyclesPerUs: number;
@@ -135,6 +141,12 @@ export interface DeviceLike {
 export interface ViewHost {
     /** Merge a patch into this device's config, re-apply and persist. */
     updateConfig(patch: Record<string, unknown>): void;
+    /**
+     * Optional: the chip's valid GPIO pins plus the pins claimed by other
+     * devices (candidate-aware for sharedBus) — for Views that build their
+     * own multi-pin picker outside the generic config editor.
+     */
+    pinInfo?(): { valid: number[]; used: Set<number> };
 }
 
 /** Page-side view of a device plugin. */
@@ -147,6 +159,13 @@ export interface ViewLike {
      * The same render(state) calls drive it; `el` is a ~24px container.
      */
     rowIcon?(el: HTMLElement): void;
+    /**
+     * Optional: teardown when the row is removed or the whole list is
+     * rebuilt (import). Views that own page-side resources outside their
+     * row element — e.g. a floating popup window appended to document.body —
+     * must remove them here, or the DOM leaks a dead window.
+     */
+    destroy?(): void;
 }
 export interface ViewClass {
     new (el: HTMLElement, sendCmd: (cmd: string, params?: Record<string, unknown>) => void, host?: ViewHost): ViewLike;

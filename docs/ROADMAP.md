@@ -2,6 +2,48 @@
 
 # Roadmap
 
+## Logic analyzer — shipped in peris 0.10.0
+
+- ✅ `logic-analyzer.js`: multi-channel GPIO waveform capture (up to 8
+  pads, one trigger: channel + edge or Immediate, guest-time window,
+  auto re-arm). Driven levels 1/0, released pads Z, times in guest µs.
+  Rides the M4 scheduler (arm 1000 watch, fine lease per `resolution`
+  preset: 20/100/300); 20 000-edge buffer freezes with an `overflow`
+  flag. Shared logic in `peris/devices/la-lib.js`; `sharedBus` makes it a
+  pure tap on other bus devices' pads.
+- ✅ Floating analyzer window: draggable, resizable, non-modal popup
+  (fixed position, no backdrop — the page underneath keeps working);
+  geometry persisted. One `drawWaveform` painter feeds the popup, the
+  details mini-preview and the row icon; channels picked from a GPIO grid
+  (`host.pinInfo()` disables occupied pins). Framework: `ctx.pinLevel`,
+  `ViewHost.pinInfo`, `View.destroy` (row removal/rebuild teardown).
+- ✅ Saleae-style plot interactions: wheel zoom anchored at the cursor,
+  drag pan, double-click/F fit; hover measurement shades the pulse and
+  reads level · width · period · frequency · PWM duty; A/B cursors with
+  Δt + 1/Δt; lane selection + ‹/›/←/→ edge jumping; lane gutter shows the
+  right-edge level per channel.
+- Tests: readout math + capture state machine units, `sigbus.pinLevel`,
+  smoke S13 (P4 soft-I2C bus capture). Ideas not in v1: pre-trigger
+  buffer, incremental edge streaming during a run, protocol decoders on
+  top of a capture (I2C/NEC annotations) — the frozen buffer already
+  carries everything a decoder needs.
+
+## MAX7219 display — shipped in peris 0.9.0
+
+- ✅ `max7219.js`: the 8-digit LED driver on a firmware bit-banged
+  DIN/CLK/LOAD bus (hardware SPI stays invisible — M0). Level-driven shift
+  engine (MSB-first, words latched on the LOAD rising edge, misaligned
+  frames dropped and counted, never garbled) + datasheet register model
+  (Code B decode with independent DP, intensity PWM, scan limit,
+  shutdown / display test, power-on defaults). 8×8 matrix and 7-segment
+  Views auto-selected from the decode-mode register; daisy chains share
+  the three pads. Shared logic in `peris/devices/max7219-lib.js`.
+- ✅ Real-firmware integration: smoke S12 boots the gun 0.1.0 release
+  (ESP32-S3, delay-free bit-bang — edges ~20 instructions apart, the
+  tightest pulses the M4 scheduler resolves: fine lease at the floor 20,
+  arm 60) and decodes its `display_init()` with zero drops;
+  `examples/esp32s3-gun.json` wires the display for the browser.
+
 ## M4 · Bit-bang protocol devices + IR — shipped in peris 0.8.0
 
 - ✅ `bitbang-i2c-slave.js`: 24C02 EEPROM and BME280 models behind two

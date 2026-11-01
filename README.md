@@ -18,11 +18,15 @@ peris/
                         led/button/touch-button/toggle-switch + pwm-led/rgb-led (register-level,
                         shared helpers in ledc-lib.js) + ws2812 (RMT channel RAM, ws2812-lib.js)
                         + bitbang-i2c-slave (24C02/BME280, i2c-lib.js) + ir-nec (NEC receiver,
-                        nec-lib.js; both ride the M4 fine-batch sampling scheduler)
+                        nec-lib.js) + max7219 (8-digit LED display, max7219-lib.js)
+                        + logic-analyzer (multi-GPIO waveform capture in a floating
+                        window, la-lib.js; the bit-bang/protocol/instrument devices
+                        ride the M4 fine-batch sampling scheduler)
   vendor/ peris.css     vendored xterm + panel styles
 examples/               wiring-config examples (JSON, directly importable;
-                        esp32c3-probe.json wires all 11 devices to the probe
-                        firmware pins — import it to test every peripheral)
+                        esp32c3-probe.json wires all 12 probe-firmware devices;
+                        esp32s3-gun.json wires the MAX7219 for the gun 0.1.0
+                        firmware)
 tests/unit/             unit tests (node:test)
 tests/m1_smoke.mjs      integration smoke test (real wasm + firmware, full chain)
 tests/m0_probe.mjs      emulator capability probe (run first on upstream upgrades)
@@ -76,7 +80,9 @@ npm run sync                 # copies the entry html + peris/ (incl. build outpu
 | WS2812 addressable LEDs | ✅ M3 | decodes from RMT channel RAM (pin-level waveform invisible); strip/ring/matrix Views. Long strips recover only their tail — the 48-word channel RAM keeps the last 46 bits of a frame (same as real C3 hardware) |
 | Bit-bang I2C slave (24C02 EEPROM, BME280) | ✅ M4 | level-driven protocol engine on two bit-banged GPIOs (SCL/SDA); answers via the SDA input path (open-drain idiom); several slaves may share one bus (wired-AND arbitration); BME280 compensation mirrored bit-exactly |
 | IR NEC receiver | ✅ M4 | captures firmware codes from a bit-banged GPIO (fine-batch edge sampling) or an RMT TX channel (channel RAM); ratio-based decode (the guest clock is not wall-accurate); repeat frames included |
-| Hardware I2C/SPI devices, displays, ADC, real touch, I2S, SD | ⏸ M5 | waiting for esp-emulator upstream APIs |
+| MAX7219 display (8×8 matrix / 7-segment) | ✅ 0.9.0 | level-driven shift engine on a firmware bit-banged DIN/CLK/LOAD bus (hardware SPI is invisible, M0); datasheet register model incl. Code B decode, intensity, scan limit, shutdown/test; daisy chains share the bus; misaligned frames dropped and counted, never garbled |
+| Logic analyzer (multi-GPIO waveforms) | ✅ 0.10.0 | up to 8 pads, channel+edge or immediate trigger, guest-time window, auto re-arm; Z shown when the pad is released; rides the M4 sampling scheduler (resolution presets); shown in a draggable/resizable non-modal floating window (the page underneath keeps working); Saleae-style plot: wheel zoom at the cursor, drag pan, hover pulse/period/frequency/duty measurement, A/B Δt cursors, edge jumping; taps other bus devices' pads legally (`sharedBus`) |
+| Hardware I2C/SPI buses (bus-attached displays, SD, etc.), ADC, real touch, I2S | ⏸ M5 | waiting for esp-emulator upstream APIs |
 
 Note: the touch **peripheral** itself is not emulated — the touch button
 appears as a GPIO input that firmware reads as plain GPIO
@@ -130,8 +136,16 @@ half duty) / GPIO4 RMT-WS2812 frames / a ~20 kHz soft-I2C master on
 SCL=GPIO1+SDA=GPIO2 (24C02 + BME280 transactions, BME compensation
 cross-checked bit-exactly) plus NEC IR codes bit-banged on GPIO5 and sent via
 RMT ch1 on GPIO10 — plus GPIO3 input-interrupt counting, for end-to-end
-verification. Import `examples/esp32c3-probe.json` (wires all 11 devices to
-those pins) after loading the merged image to exercise every peripheral.
+verification. Import `examples/esp32c3-probe.json` (wires all 12 devices to
+those pins — the logic analyzer taps the I2C pair) after loading the merged
+image to exercise every peripheral.
+
+A second, real-world integration example: `examples/esp32s3-gun.json` wires
+the MAX7219 display for the gun 0.1.0 release (ESP32-S3,
+DIN=GPIO21/CLK=GPIO13/LOAD=GPIO14, bit-banged transport) — load
+`gun-0.1.0-merged.bin` and the boot register-init sequence and the value
+pushes decode live. The smoke test runs the same firmware as S12 when the
+release binary is on this machine.
 
 Note: the page itself has no CDN dependency — xterm/xterm-addon-fit are
 vendored into `peris/vendor/` (unminified npm builds), so it works offline.

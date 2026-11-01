@@ -56,6 +56,10 @@
 - **设备 → 页面**:设备 `markDirty()` → `flushStates` 节流 ~30fps;**节流窗口内挂尾随
   定时器,保证最后一次 dirty 必达**(否则静止在窗口内的最终状态会被丢弃)。
 - **页面 → 设备**:View `sendCmd()` → `peris_command` → `runtime.command()` → `onCommand`。
+  View 可以持有行以外的页面 DOM(逻辑分析仪的浮动窗口挂在 `document.body`
+  上、`position: fixed`,刻意做成非模态——无遮罩,页面其余部分的指针事件
+  照常);面板在行移除与列表重建时调用可选的 `View.destroy()`,此类 DOM
+  不会比设备活得久。
 - **输入引脚电平**:唯一写者是 `ctx.setPinInput`(设备)与 Debug 网格的 `gpio_input`。
   页面侧 `gpioInputLevels[]` 只是 Debug 网格自己的镜像,不是权威状态;权威状态在设备里
   (`onEmuReady` 时重驱动)。
@@ -99,7 +103,12 @@ S7/S8 以 `###P2` 标记驱动,S9 按 `###P3`,S10/S11(soft-I2C 从机+NEC 双路
 后行式渲染、行内改名/改 GPIO/翻 V·G、行内图标交互(点灯换色/按压/开关)、展开详情
 与配置编辑、拖动排序、载固件、Run 后 LED 翻转、PWM/RGB LED 自动绑定固件
 LEDC 通道且 P2 阶段呼吸平滑渐变、P4 阶段 I2C 事务日志滚动且 EEPROM 十六进
-制 dump 可从 View 预写、两行 ir-nec 上红外码出现、配置导入导出往返;浏览器
+制 dump 可从 View 预写、两行 ir-nec 上红外码出现、逻辑分析仪:添加后在浮
+动窗口的 GPIO 网格勾选通道(被占用引脚置灰)、Arm 后 P4 软 I2C 总线运行期
+间波形渲染、窗口拖动/调大调小且下层页面照常交互、Saleae 风格绘图检查
+(滚轮以光标为锚点缩放、拖拽平移、悬停测量显示脉宽/周期/频率/占空比、
+两击放置 A/B 游标并读 Δt 与 1/Δt、双击复位适配)、行移除时窗口关闭、
+配置导入导出往返;浏览器
 自动化待网络环境允许时引入 Playwright,
 `PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright`)。
 

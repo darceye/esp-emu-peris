@@ -249,6 +249,7 @@ export class PerisRuntime {
             },
             cycles: () => rt.emu ? rt.emu.cycles() : 0,
             cyclesPerUs: rt.cyclesPerUsCached,
+            pinLevel: (pin) => rt.sigbus.pinLevel(pin),
             subscribe: (pins) => rt.sigbus.subscribe(subFn, pins),
             unsubscribe: () => rt.sigbus.unsubscribe(subFn),
             markDirty: () => { rt.dirty.add(id); },

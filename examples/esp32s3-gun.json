@@ -1,0 +1,7 @@
+{
+    "perisVersion": 1,
+    "chip": "esp32s3",
+    "devices": [
+        { "id": "mx-1", "type": "max7219", "name": "Gun 7-seg display (DIN21/CLK13/LOAD14)", "din": 21, "clk": 13, "load": 14, "mode": "auto" }
+    ]
+}

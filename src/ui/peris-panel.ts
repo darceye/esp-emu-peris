@@ -254,6 +254,7 @@ export class PerisPanel {
         remove.textContent = '×';
         remove.addEventListener('click', () => {
             this.config.devices = this.config.devices.filter((d) => d.id !== devCfg.id);
+            this.views.get(devCfg.id)?.view?.destroy?.(); // popups etc. live outside the row
             this.views.delete(devCfg.id);
             this.expanded.delete(devCfg.id);
             row.remove();
@@ -304,6 +305,13 @@ export class PerisPanel {
                 view?.setConfig?.(devCfg);
                 this.renderRows();
             },
+            // multi-pin pickers built by a View (logic-analyzer channels)
+            // grey out occupied GPIOs with the same candidate-aware set the
+            // generic editor uses — one source, never a forked copy
+            pinInfo: () => ({
+                valid: validPins(this.deps.getChip()),
+                used: this.usedPins(devCfg.id, meta),
+            }),
         };
         const ViewClass: ViewClass | undefined = this.registry?.View(devCfg.type);
         if (ViewClass) {
@@ -427,6 +435,9 @@ export class PerisPanel {
     private renderAll() {
         const list = document.getElementById('peris-cards')!;
         list.innerHTML = '';
+        // Views may own DOM outside their row (floating windows) — give
+        // every old view a teardown before the rows are discarded.
+        for (const { view } of this.views.values()) view?.destroy?.();
         this.views.clear();
         for (const devCfg of this.config.devices) {
             const meta = this.registry?.meta(devCfg.type);

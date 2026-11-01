@@ -51,10 +51,13 @@ export class Device {          // runs in the worker, talks to the emulator
 export class View {             // runs on the page, renders the device view
     constructor(el, sendCmd, host) {}  // el = details body container;
                                        // sendCmd(cmd, params);
-                                       // host.updateConfig(patch) requests a config change
+                                       // host.updateConfig(patch) requests a config change;
+                                       // host.pinInfo?() → { valid, used } pins for multi-pin pickers
     rowIcon(el) {}               // optional: compact interactive row icon (~24px), see below
     render(state) {}             // state comes from Device.getState(); drives icon and body together
     setConfig(cfg) {}            // optional: called after config edits (e.g. LED colour)
+    destroy() {}                 // optional: row removed / list rebuilt — Views owning DOM
+                                       //   outside their row (floating windows) must clean it up
 }
 ```
 
@@ -98,6 +101,7 @@ The peripherals pane is its own column in the three-pane layout
 | `ctx.setPinInput(pin, high)` | drive a pin's input level (firmware reads it; raises GPIO interrupts) |
 | `ctx.subscribe(pins)` / `ctx.unsubscribe()` | subscribe to pin-output changes (onPinState) |
 | `ctx.readMem(addr, len)` / `ctx.readU32(addr)` | bus/MMIO reads (LEDC duty, RMT RAM, …) |
+| `ctx.pinLevel(pin)` | current driven level straight from `gpio_state()` — true/false while the guest drives the pad (oe), null when released. One wasm read: snapshot channels sparingly (the logic analyzer samples at capture start), never per batch |
 | `ctx.cycles()` | emulator cycle counter |
 | `ctx.cyclesPerUs` | emulator clock in cycles per µs (edge timing → time units) |
 | `ctx.armSampling(batch)` | M4 scheduler: standing run_batch size while this device watches an idle bus |
@@ -173,6 +177,50 @@ level- or ratio-based, never absolute-µs. The M4 plugins follow both rules:
   leaves `APB_MEM_WADDR` at 0 so mid-TX stitching is impossible). Ratio-
   based decode; `source: auto` prefers RMT routing. Envelope + decode in
   `peris/devices/nec-lib.js`.
+- `peris/devices/max7219.js` — MAX7219 display driver on a bit-banged
+  DIN/CLK/LOAD bus (write-only: no input path needed). The shift engine
+  samples DIN on CLK rising edges, latches 16-bit words on the LOAD rising
+  edge, and drops misaligned frames (counted in `dropped`) instead of
+  garbling the display. Register model + Code B font + painters in
+  `peris/devices/max7219-lib.js`; daisy chains share the pads
+  (`sharedBus`, `chain`/`pos` pick each part's word). Lease sizing is at
+  the scheduler floor (fine 20 / arm 60): measured against delay-free
+  back-to-back `gpio_set_level` pulses (edges ~20 instructions apart), the
+  tightest real firmware found — delay-paced bit-bang is covered with
+  much wider margins.
+
+## Instrument devices (0.10.0)
+
+- `peris/devices/logic-analyzer.js` — multi-channel GPIO waveform capture
+  (up to 8 pads, one trigger: channel + rising/falling/any edge or
+  Immediate, guest-time window, auto re-arm). Readout math, the waveform
+  painter and the floating window live in `peris/devices/la-lib.js`; the
+  painter is one implementation shared by the popup, the details
+  mini-preview and the row icon. Sampling rides the M4 scheduler like the
+  bit-bang devices (arm lease while waiting for the trigger, fine lease
+  renewed per edge while recording — the `resolution` config picks the
+  fine batch: 20/100/300 instructions). Levels are 1/0 driven and -1 (Z)
+  when the guest releases the pad; the analyzer never drives anything, so
+  it declares `sharedBus` and legally taps pads other bus devices own.
+  Capture data is pushed in full only when the buffer freezes (`done`);
+  run pushes carry progress + live per-channel edge counts.
+- **Floating windows** (`la-lib.makeFloatingWindow`): big UIs open a
+  draggable, resizable, **non-modal** popup — `position: fixed`, no
+  backdrop, so the page underneath keeps every pointer event. Geometry is
+  clamped to the viewport and persisted to localStorage. Because such a
+  window lives on `document.body` (outside the device row), its View must
+  implement `destroy()` to remove it when the row goes away — the panel
+  calls `destroy()` on row removal and on list rebuilds. Multi-pin pickers
+  inside a View grey out occupied GPIOs through `host.pinInfo()` (the same
+  candidate-aware set the generic editor uses).
+- **Saleae-style plot model** (also in `la-lib`): a zoomable view
+  `{t0, spanUs}` with `viewXform`/`clampView`/`zoomAt` (wheel zoom anchored
+  at the cursor, drag pan, fit on double-click), hover measurement
+  (`pulseAround` for the pulse under the cursor, `pwmOf` for
+  period/frequency/duty from consecutive rising edges), A/B cursors with
+  Δt + 1/Δt and edge jumping (`levelAt`, `fmtHz`). The device bumps `capId`
+  on every capture start so Views reset zoom/cursors when fresh data
+  arrives.
 
 ## Message protocol (page ↔ worker)
 
@@ -247,4 +295,10 @@ Added on top of the stock worker protocol (see `peris/protocol.js`):
 - `peris/devices/ws2812-lib.js` — shared helper module (not a device)
 - `peris/devices/bitbang-i2c-slave.js` — bit-bang I2C slave (i2c-lib.js engine)
 - `peris/devices/ir-nec.js` — NEC receiver, gpio + RMT capture (nec-lib.js)
-- `peris/devices/i2c-lib.js` / `peris/devices/nec-lib.js` — shared helper modules (not devices)
+- `peris/devices/max7219.js` — MAX7219 display on a bit-banged 3-wire bus
+  (max7219-lib.js engine, Code B font, matrix/7-seg painters)
+- `peris/devices/logic-analyzer.js` — multi-GPIO waveform capture with a
+  floating analyzer window (la-lib.js readout math + painter + window)
+- `peris/devices/i2c-lib.js` / `peris/devices/nec-lib.js` /
+  `peris/devices/max7219-lib.js` / `peris/devices/la-lib.js` — shared
+  helper modules (not devices)

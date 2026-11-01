@@ -137,6 +137,13 @@ and `docs/FEASIBILITY.md` (M0 measurements).
    the runtime wired-ANDs shared pads' input drives (gpio_set_input is a
    single-winner level write - two slave engines otherwise clobber each
    other's ACK pulls, a real M4 bug).
+11. **Views may own DOM outside their row** (the logic-analyzer floating
+   window is `position: fixed` on `document.body`, non-modal by design —
+   never add a backdrop). Such Views MUST implement `destroy()` (the panel
+   calls it on row removal and list rebuilds) and build multi-pin pickers
+   from `host.pinInfo()` — the same candidate-aware pin set the generic
+   editor uses, never a forked copy. `ctx.pinLevel(pin)` reads the current
+   driven level for snapshots only; the change stream stays `onPinState`.
 
 ## 4. Past bugs (prevent regressions)
 
@@ -156,6 +163,7 @@ and `docs/FEASIBILITY.md` (M0 measurements).
 | two I2C slaves on one bus NACKed every transaction (M4) | `gpio_set_input` is a single-winner level write; shared-bus pads need the runtime's wired-AND arbitration (`sharedBus` metadata) |
 | read-address bytes were never ACKed by the engine (M4, unit-caught) | the ACK decision belongs to the *completed byte* (`ackThisByte`), not to the (already switched) phase |
 | C compensation diverged from the JS model only in pressure (M4) | `dig_P1` is uint16 in the Bosch layout; 36477 wraps negative in int16 - keep the C and JS implementations cross-checked bit-exactly by the smoke test |
+| the logic-analyzer popup opened empty (0.10.0 GUI smoke): a `this.`-less `trigSel` threw mid-construction and the half-built window stayed on screen | unit tests never run View DOM code — for popup-building plugins, do a GUI pass with a `window.addEventListener('error')` trap; also wrap `setPointerCapture` in try/catch (synthetic/automated pointer events carry no active pointer id and throw NotFoundError, killing the drag) |
 
 ## 5. Testing & verification conventions
 
@@ -174,7 +182,15 @@ and `docs/FEASIBILITY.md` (M0 measurements).
   devices (S1–S6 GPIO devices — S4b drives the `###P1b` digital-in sampling:
   switch/touch/button levels read back by the guest plus the LED mirror,
   S7/S8 LEDC register-level devices driven by the `###P2` markers, S9 ws2812
-  by `###P3`, S10/S11 the M4 I2C+IR devices by `###P4`). **Timing lessons**:
+  by `###P3`, S10/S11 the M4 I2C+IR devices by `###P4`, S13 the logic
+  analyzer armed on the P4 soft-I2C bus (SCL/SDA legally shared with the
+  i2c slaves); S12 is
+  **machine-local**: it boots the gun 0.1.0 release — a real-world
+  ESP32-S3 firmware with a delay-free bit-banged MAX7219 — in a second
+  emulator instance and skips with a notice when
+  `D:/d3/_git/gun_flag_monster/gun/release/0.1.0/gun-0.1.0-merged.bin`
+  is absent; the gun project is read-only reference material, never modify
+  it, and its later releases use hardware SPI (invisible, M0)). **Timing lessons**:
   - **drive by UART markers, never batch counts** — with M4 leases standing
     a sleep batch fast-forwards ~680k cycles, and a batch-count window
     overshoots whole rounds (the firmware prints `###P1/P1b..P4 start/end` and

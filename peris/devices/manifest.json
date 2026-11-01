@@ -8,6 +8,8 @@
         { "module": "rgb-led.js" },
         { "module": "ws2812.js" },
         { "module": "bitbang-i2c-slave.js" },
-        { "module": "ir-nec.js" }
+        { "module": "ir-nec.js" },
+        { "module": "max7219.js" },
+        { "module": "logic-analyzer.js" }
     ]
 }

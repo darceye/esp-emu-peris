@@ -45,10 +45,13 @@ export class Device {          // 运行在 worker,与模拟器交互
 
 export class View {             // 运行在页面,渲染设备视图
     constructor(el, sendCmd, host) {}  // el=详情区主体容器; sendCmd(cmd, params);
-                                       // host.updateConfig(patch) 请求改本设备配置
+                                       // host.updateConfig(patch) 请求改本设备配置;
+                                       // host.pinInfo?() → { valid, used } 供多引脚选择器
     rowIcon(el) {}               // 可选:行内交互图标(el≈24px 容器),见下文
     render(state) {}             // state 来自 Device.getState();行图标与详情主体一起驱动
     setConfig(cfg) {}            // 可选:配置编辑后回调(如换 LED 颜色)
+    destroy() {}                 // 可选:行被移除/列表重建时回调——持有行外 DOM
+                                       //   (浮动窗口)的 View 必须在此清理
 }
 ```
 
@@ -84,6 +87,7 @@ export class View {             // 运行在页面,渲染设备视图
 | `ctx.setPinInput(pin, high)` | 驱动引脚输入电平(固件可读到、可触发 GPIO 中断) |
 | `ctx.subscribe(pins)` / `ctx.unsubscribe()` | 订阅引脚输出变化(onPinState) |
 | `ctx.readMem(addr, len)` / `ctx.readU32(addr)` | 总线/MMIO 读取(LEDC duty、RMT RAM 等) |
+| `ctx.pinLevel(pin)` | 直接读 `gpio_state()` 的当前驱动电平——客机驱动引脚(oe)时为 true/false,释放时为 null。一次 wasm 读:快照要节制(逻辑分析仪仅在捕获起点采样),不要每批都读 |
 | `ctx.cycles()` | 模拟器周期计数 |
 | `ctx.cyclesPerUs` | 模拟器时钟(周期/µs),边沿计时换算真实时间用 |
 | `ctx.armSampling(batch)` | M4 调度器:设备监视空闲总线期间的常设 run_batch 尺寸 |
@@ -120,6 +124,31 @@ M3 的 WS2812 插件遵循同一模式,共享库为 **`peris/devices/ws2812-lib.
 同一语义只有一份实现)。其实测约束已在 UI 呈现:48 字通道 RAM 只保留帧的
 最后 46 位,长灯带只能解码出尾部 LED(见 FEASIBILITY.zh-cn.md
 "关键技术细节" 3–4)。
+
+## 仪器类设备(0.10.0)
+
+- `peris/devices/logic-analyzer.js` —— 多通道 GPIO 波形捕获(最多 8 个引
+  脚,一个触发:通道 + 上升/下降/任意沿或"立即",客机时间窗口,自动重新
+  武装)。读数数学、波形绘制器与浮动窗口都在 `peris/devices/la-lib.js`;
+  绘制器只有一份实现,弹窗、详情迷你预览与行图标共用。采样复用 M4 调度
+  器,与位绑定设备一致(等触发时持 arm 租约,录制期间每次边沿续租细批
+  ——`resolution` 配置决定细批:20/100/300 条指令)。电平为驱动 1/0、
+  客机释放引脚时 -1(Z);分析仪从不驱动任何东西,因此声明 `sharedBus`,
+  合法搭接其他总线设备占用的引脚。捕获数据仅在缓冲冻结(`done`)时全量
+  推送;运行中的推送只带进度 + 各通道实时边沿计数。
+- **浮动窗口**(`la-lib.makeFloatingWindow`):大界面以可拖动、可调大小、
+  **非模态**弹窗打开——`position: fixed`、无遮罩,下层页面的一切指针事件
+  照常。几何位置钳制在视口内并持久化到 localStorage。此类窗口挂在
+  `document.body`(不在设备行内),其 View 必须实现 `destroy()` 在行销毁
+  时移除——面板在行移除与列表重建时都会调用 `destroy()`。View 内的多引
+  脚选择器通过 `host.pinInfo()` 将被占用 GPIO 置灰(与通用编辑器同一份、
+  按候选设备感知的引脚集合)。
+- **Saleae 风格绘图模型**(同在 `la-lib`):可缩放视图 `{t0, spanUs}` 配
+  `viewXform`/`clampView`/`zoomAt`(滚轮以光标为锚点缩放、拖拽平移、双击
+  复位适配),悬停测量(`pulseAround` 找光标所在脉冲,`pwmOf` 按相邻上升
+  沿算周期/频率/占空比),A/B 游标读 Δt 与 1/Δt,边沿跳转(`levelAt`、
+  `fmtHz`)。设备在每次捕获开始时递增 `capId`,View 据此在新数据到来时
+  重置缩放与游标。
 
 ## 消息协议(页面 ↔ worker)
 
@@ -187,6 +216,13 @@ CPU 驱动(位绑定)的波形**可以**出现在 `onPinState` 里——但
   发送后的通道 RAM 里;模拟器不实现 `APB_MEM_WADDR`(恒 0),发送中途
   拼接不可行)。按比值解码;`source: auto` 优先 RMT 路由。包络组装与
   解码在 `peris/devices/nec-lib.js`。
+- `peris/devices/max7219.js` —— 位绑定 DIN/CLK/LOAD 总线上的 MAX7219
+  显示驱动(只写器件,无需输入路径)。移位引擎在 CLK 上升沿采样 DIN、
+  LOAD 上升沿锁存 16 位字;失准帧被丢弃并计入 `dropped`,绝不出花屏。
+  寄存器模型、Code B 字体与画图在 `peris/devices/max7219-lib.js`;菊花链
+  共享焊盘(`sharedBus`,`chain`/`pos` 取各片的字)。租约取调度器下限
+  (细批 20/警戒 60):按无延时背靠背 `gpio_set_level` 脉冲实测标定(边沿
+  相距约 20 条指令)——这是已知最紧的真实固件,带延时的位绑定余量更大。
 
 ## 示例
 
@@ -200,6 +236,12 @@ CPU 驱动(位绑定)的波形**可以**出现在 `onPinState` 里——但
   (onBatch + ctx.mmio + ws2812-lib 帧解码,灯带/环形/矩阵 View)
 - `peris/devices/bitbang-i2c-slave.js` — 位绑定 I2C 从机(i2c-lib.js 引擎)
 - `peris/devices/ir-nec.js` — NEC 接收器,gpio + RMT 双路捕获(nec-lib.js)
+- `peris/devices/max7219.js` — 位绑定三线总线上的 MAX7219 显示
+  (max7219-lib.js 引擎、Code B 字体、矩阵/七段画图)
+- `peris/devices/logic-analyzer.js` — 带浮动分析窗口的多 GPIO 波形捕获
+  (la-lib.js 读数数学 + 绘制器 + 浮窗)
 - `peris/devices/ledc-lib.js` — 共享辅助模块(不是设备)
 - `peris/devices/ws2812-lib.js` — 共享辅助模块(不是设备)
-- `peris/devices/i2c-lib.js` / `peris/devices/nec-lib.js` — 共享辅助模块(不是设备)
+- `peris/devices/i2c-lib.js` / `peris/devices/nec-lib.js` /
+  `peris/devices/max7219-lib.js` / `peris/devices/la-lib.js` — 共享辅助
+  模块(不是设备)

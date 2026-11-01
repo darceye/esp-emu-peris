@@ -50,6 +50,21 @@ export class Sigbus {
         if (this.emu) this.emu.gpio_set_input(pin, high);
     }
 
+    /**
+     * Current driven level of one pad straight from gpio_state(): true/false
+     * while the guest drives it (oe set), null when released. For snapshot
+     * use (e.g. logic-analyzer channel levels at capture start) — the
+     * per-batch change stream stays the onPinState path.
+     */
+    pinLevel(pin: number): boolean | null {
+        if (!this.emu) return null;
+        const s = this.emu.gpio_state();
+        const bit = pin % 32;
+        const oe = ((pin < 32 ? s[2] : s[3]) >>> bit) & 1;
+        if (!oe) return null;
+        return (((pin < 32 ? s[0] : s[1]) >>> bit) & 1) !== 0;
+    }
+
     /** Read gpio_state() and notify subscribers of changed pins. */
     sample() {
         if (this.subs.size === 0 || !this.emu) return;

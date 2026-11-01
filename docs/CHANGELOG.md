@@ -8,6 +8,98 @@ CHANGELOG.zh-cn.md).
 Rules: major = breaking protocol/architecture change; minor = new capability;
 patch = fixes and small changes.
 
+## peris 0.10.0
+
+- **Logic analyzer** (`logic-analyzer.js` v1.0.0, logic in `la-lib.js`):
+  multi-channel GPIO waveform capture for firmware-driven signals — up to
+  8 arbitrary GPIOs, one trigger (channel + rising/falling/any edge, or
+  Immediate), a 1–1000 ms guest-time capture window and an optional auto
+  re-arm. Levels are 1/0 while driven and **Z** when the guest releases the
+  pad (oe drops); times are guest µs from the cycle counter (the guest clock
+  is not wall-accurate, M4). Sampling rides the M4 scheduler exactly like
+  the other bit-bang devices: an `arm` lease (1000) while waiting for the
+  trigger, a fine lease renewed per edge while recording (`resolution`
+  preset: fine 20 = the scheduler floor / normal 100 / coarse 300); two
+  flips inside one batch merge — the preset picks how fine that is. A
+  probe never drives: `sharedBus` lets it tap pads other bus devices own
+  (the I2C pair, a MAX7219 bus, other analyzers), and the 20 000-edge
+  buffer freezes with an `overflow` flag instead of garbling.
+- **Floating analyzer window**: the waveform UI is big, so it lives in a
+  draggable, resizable, **non-modal** popup (`la-lib.makeFloatingWindow`,
+  fixed-position, no backdrop — the page underneath keeps every pointer
+  event; geometry clamped to the viewport and persisted to localStorage).
+  The row icon and the expanded details show a live mini-preview of the
+  same painter (`drawWaveform` — one paint path for all three sizes);
+  clicking either opens the window. Channels are picked from a GPIO chip
+  grid (occupied pins disabled via the new `host.pinInfo()`), trigger /
+  window / resolution / label live in the config editor and the window
+  toolbar.
+- **Saleae-style plot interactions** (0.10.0, same release): **wheel zoom**
+  anchored at the cursor (zoom floor 1 ns, clamped to the capture extent),
+  **left/middle-drag pan**, **double-click / F / ⤢ zoom-to-fit**; a fresh
+  capture re-fits the view and drops the cursors (`capId` in the state).
+  **Hover measurement** shades the pulse under the cursor and reads out
+  level · pulse width · period · frequency · **PWM duty** (cycle =
+  rise→rise; computed from the visible channel, live in the measurement
+  bar); the lane gutter shows each channel's level at the view's right
+  edge. **A/B measurement cursors**: click twice to drop them, drag the
+  lines to move, read Δt and 1/Δt frequency; ✕ clears. **Edge jumping**:
+  click a lane label to select the channel, then ‹/› buttons or ←/→ keys
+  pan view-centre onto the previous/next edge (zoom preserved).
+- **Device API v1 additions** (backwards compatible): `ctx.pinLevel(pin)`
+  — current driven level straight from `gpio_state()` (null when released;
+  the LA snapshots channel levels at capture start); `ViewHost.pinInfo()`
+  — valid + used pins for Views building their own multi-pin picker;
+  `View.destroy()` — teardown when the row is removed or the list is
+  rebuilt, so Views owning DOM outside their row (floating windows) clean
+  it up; the panel calls it on remove and on `renderAll`.
+- Tests: unit cases for the readout math (parsePins, levelAt, axis ticks,
+  fmt, fit span, pixel transform), the full capture state machine through
+  a fake ctx (immediate/triggered starts, direction filtering, Z edges,
+  window end, stop/clear/auto — incl. the auto+Immediate warning — buffer
+  overflow, onEmuReady reset) and `sigbus.pinLevel` against a fake
+  emulator; smoke S13 arms the analyzer on the P4 soft-I2C bus (SCL 1950 /
+  SDA 352 alternating edges in a 40 ms window, frozen afterwards);
+  `examples/esp32c3-probe.json` now wires 12 devices.
+
+## peris 0.9.0
+
+- **MAX7219 Display** (`max7219.js` v1.0.0, logic in `max7219-lib.js`): the
+  8-digit LED driver behind a firmware **bit-banged DIN/CLK/LOAD bus**.
+  Hardware SPI wiring stays invisible to `gpio_state()` (M0), so the device
+  targets soft-SPI code — from delay-paced bit-bang down to back-to-back
+  `gpio_set_level` pulses. A level-driven shift engine samples DIN on the
+  CLK rising edge, assembles MSB-first 16-bit words and latches a frame on
+  the LOAD rising edge; misaligned frames (edges lost to sampling) are
+  dropped and counted in `dropped` instead of garbling the display. The
+  register model follows the datasheet: Code B decode (D3–D0, D7 = DP
+  independent), intensity PWM (16 steps, (I+1)/32 duty), scan limit,
+  shutdown / display test, power-on defaults (shutdown, scan 1 digit,
+  minimum intensity). Views: 8×8 matrix (digit = row, D7..D0 = columns) or
+  7-segment digits, auto-selected from the decode-mode register; daisy
+  chains legally share the three pads (`sharedBus`) and each part latches
+  the word that ended in its chain position (`chain` + `pos` config).
+  Lease sizing measured against the tightest real firmware (gun 0.1.0:
+  delay-free pulses, edges ~20 instructions apart, LOAD fall → first CLK
+  rise ~80): fine batches at the scheduler floor (**20**), arm at **60**.
+- **Smoke S12** (machine-local, skips with a notice when absent): the gun
+  0.1.0 release (ESP32-S3, DIN=21/CLK=13/LOAD=14; later gun releases moved
+  to hardware SPI, invisible by M0) boots in a second emulator instance —
+  `display_init()`'s 14 register words decode with **zero** misalignment
+  drops and the control task's value pushes follow. New example
+  `examples/esp32s3-gun.json` wires the display for that firmware.
+
+| device | version |
+|---|---|
+| led | 1.1.1 |
+| button / touch-button / toggle-switch | 1.1.0 |
+| pwm-led / rgb-led | 1.0.0 |
+| ws2812 | 1.0.0 |
+| bitbang-i2c-slave | 1.0.0 |
+| ir-nec | 1.0.0 |
+| max7219 | 1.0.0 |
+| logic-analyzer | 1.0.0 |
+
 ## peris 0.8.1
 
 - **Test firmware P1b** (digital-in sampling): every round now samples the
