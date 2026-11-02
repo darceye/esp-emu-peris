@@ -9,10 +9,12 @@
 
 ```bash
 npm install                # typescript 走 npmmirror(见 §1)
-npm run build              # tsc:src/ → build/(改 src 后必须;build/ 不入 git)
+npm run build              # prebuild 先把 esp-emulator 浏览器构建下载到
+                           # vendor/esp-emu-browser/(首次),然后 tsc:src/ → build/
+                           #(改 src 后必须;build/ 不入 git)
 npm test                   # 单元测试 + 集成冒烟
 npm run serve              # http://127.0.0.1:8080/esp-emu-peris.html
-npm run sync               # 发布进 _tools/esp-emu-browser/www(先 build;--clean 清残留)
+npm run sync               # 发布进 vendor/esp-emu-browser/www(先 build;--clean 清残留)
 ```
 
 架构与数据流见 `docs/ARCHITECTURE.zh-cn.md`;外设开发见 `docs/DEVICE-API.zh-cn.md`;
@@ -24,6 +26,12 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
   `npm --registry=https://registry.npmmirror.com install ...`;静态资源从
   `https://registry.npmmirror.com/<pkg>/-/<name>-<ver>.tgz` 下 tarball 解包
   (xterm 就是这样 vendor 进 `peris/vendor/` 的;包内是**非压缩**版,无 .min)。
+- **GitHub 下载要走本机代理**:`https_proxy=http://127.0.0.1:10809`。
+  esp-emulator 浏览器(wasm)构建由 `tools/fetch_esp_emu.py` 从
+  espressif/esp-emulator 的 GitHub release 下载(`npm run build`/`npm test`
+  自动触发;识别 `https_proxy`;sha256 校验;tarball 缓存在
+  `vendor/downloads/`;解压到 `vendor/esp-emu-browser/www`)。用
+  `ESP_EMU_WWW=/path/to/www` 可改指向。
 - **Playwright 浏览器二进制**未装(网络);要装:
   `PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright`。
 - **ESP-IDF**:master 检出在 `C:\esp\master\esp-idf`,环境启用用

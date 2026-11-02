@@ -47,7 +47,10 @@ places; devices carry their own versions).
 npm install
 
 # dev loop: edit src/ → build → test → merged dev server
-npm run build
+npm run build               # first run also downloads the esp-emulator browser
+                            # (wasm) build from the espressif/esp-emulator
+                            # GitHub release into vendor/esp-emu-browser/ —
+                            # set https_proxy first if you need a proxy
 npm test
 npm run serve               # http://127.0.0.1:8080/esp-emu-peris.html
 
@@ -64,11 +67,29 @@ npm run serve               # http://127.0.0.1:8080/esp-emu-peris.html
 ```
 
 **Publish** the peripherals panel into the official www directory (add-only,
-never modifies; build first):
+never modifies; build first) — by default the fetched `vendor/esp-emu-browser/www`,
+or any checkout via `--www` / `ESP_EMU_WWW`:
 
 ```bash
 npm run sync                 # copies the entry html + peris/ (incl. build output) + examples/
 ```
+
+## From a release package
+
+Download `esp-emu-peris-<version>.zip` (or `.tar.gz`) from the
+[releases page](https://github.com/darceye/esp-emu-peris/releases), unpack
+and run the installer — it downloads the esp-emulator browser (wasm) build
+from GitHub releases into `vendor/` (needs Python 3; behind a firewall set
+`https_proxy` first, e.g. `https_proxy=http://127.0.0.1:10809`):
+
+```bash
+./install.sh                 # Windows: install.bat
+python serve.py              # http://127.0.0.1:8080/esp-emu-peris.html
+```
+
+No npm/node needed — the package ships the UI pre-compiled. For a different
+esp-emulator version: `./install.sh --version 0.52.0` (or
+`python tools/fetch_esp_emu.py --version 0.52.0`).
 
 ## Capabilities & limits (measured; details in docs/FEASIBILITY.md)
 

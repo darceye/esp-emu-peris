@@ -17,12 +17,16 @@
  *
  * Usage: node tests/m0_probe.mjs [firmware.bin] [--json]
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const WWW = 'D:/d3/_git/esp_proj/_tools/esp-emu-browser/www';
+const WWW = process.env.ESP_EMU_WWW || path.join(REPO, 'vendor', 'esp-emu-browser', 'www');
+if (!existsSync(path.join(WWW, 'pkg', 'esp_emu.js'))) {
+    console.error(`error: ${path.join(WWW, 'pkg', 'esp_emu.js')} not found — run "npm run build" (or "python tools/fetch_esp_emu.py") first, or set ESP_EMU_WWW`);
+    process.exit(1);
+}
 const FW = process.argv[2] ?? path.join(REPO, 'tests/firmware/peris_probe/build/merged-binary.bin');
 
 // --- ESP32-C3 MMIO map (from IDF soc headers, see docs/FEASIBILITY.md) ---

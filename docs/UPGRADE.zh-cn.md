@@ -4,12 +4,16 @@
 
 ## 锁定版本
 
-当前基线:**esp-emulator v0.51.0**(`_tools/esp-emu-browser/www/pkg`,wasm-bindgen `--target web`)。
+当前基线:**esp-emulator v0.51.0**(`vendor/esp-emu-browser/www/pkg`,由
+`tools/fetch_esp_emu.py` 从 GitHub release 下载,wasm-bindgen `--target web`)。
 
 ## 升级步骤
 
-1. 下载新版 wasm 包(如 `esp-emu-<ver>-wasm.tar.gz`)解压出新的 `www/`
-   (`_tools` 下已有 `update_esp_emu_browser.bat`,目前为空,可按此逻辑补全)。
+1. 拉取新版 wasm 包:`python tools/fetch_esp_emu.py --version <ver>`——从
+   espressif/esp-emulator 的 GitHub release 下载 `esp-emu-<ver>-wasm.tar.gz`
+   并把其中的 `www/` 解压到 `vendor/esp-emu-browser/www`(识别 `https_proxy`;
+   事后把脚本里的 `DEFAULT_VERSION` 一并升级)。也可以用
+   `ESP_EMU_WWW=/path/to/new/www` 直接指向任意解压副本。
 2. **先跑 M0 探针**:`node tests/m0_probe.mjs <新固件路径不动,直接对 pkg>`。
    探针直接 import 新 `pkg/esp_emu.js`,六项结论(Q1a/Q1b/Q2a/Q2b/Q3a/Q3b)若有变化,
    先更新 `docs/FEASIBILITY.zh-cn.md` 与 `peris/mmio/` 地址表,再动其它代码。

@@ -102,5 +102,6 @@
 
 ## 维护项
 
-- `update_esp_emu_browser.bat`(在 `_tools`,当前为空):按 UPGRADE.zh-cn.md 流程脚本化。
+- ~~`update_esp_emu_browser.bat`~~——已用更好的方式解决:`tools/fetch_esp_emu.py`
+  可下载/解压任意 esp-emulator release(`--version <版本>`),见 UPGRADE.zh-cn.md。
 - `src/core/mmio/`:补 C5/C6/H2/P4/S3 地址表(从各自 IDF soc 头文件提取,方法同 M0)。

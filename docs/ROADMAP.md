@@ -126,7 +126,8 @@ esp-emulator releases (upgrade procedure in UPGRADE.md):
 
 ## Maintenance items
 
-- `update_esp_emu_browser.bat` (in `_tools`, currently empty): script the
-  UPGRADE.md procedure.
+- ~~`update_esp_emu_browser.bat`~~ — solved differently: `tools/fetch_esp_emu.py`
+  downloads/unpacks any esp-emulator release (`--version <ver>`), see
+  UPGRADE.md.
 - `src/core/mmio/`: add the C5/C6/H2/P4/S3 address tables (extracted from each
   chip's IDF soc headers, same method as M0).

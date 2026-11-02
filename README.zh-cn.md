@@ -40,7 +40,10 @@ AGENT.md                环境/架构/坑(贡献前必读)
 npm install
 
 # 开发循环:改 src/ → 构建 → 测试 → 起 merged 开发服务器
-npm run build
+npm run build               # 首次运行会自动从 espressif/esp-emulator 的
+                            # GitHub release 下载浏览器(wasm)构建到
+                            # vendor/esp-emu-browser/——需要代理的话先设
+                            # https_proxy
 npm test
 npm run serve               # http://127.0.0.1:8080/esp-emu-peris.html
 
@@ -54,11 +57,27 @@ npm run serve               # http://127.0.0.1:8080/esp-emu-peris.html
 # 选中)
 ```
 
-把外设面板**发布**进官方 www 目录(只增不改;先 build):
+把外设面板**发布**进官方 www 目录(只增不改;先 build)——默认目标是自动下载
+的 `vendor/esp-emu-browser/www`,也可用 `--www` / `ESP_EMU_WWW` 指向任意目录:
 
 ```bash
 npm run sync                 # 复制入口 html + peris/(含编译产物)+ examples/
 ```
+
+## 从 release 包使用
+
+从 [releases 页面](https://github.com/darceye/esp-emu-peris/releases)下载
+`esp-emu-peris-<版本>.zip`(或 `.tar.gz`)解压后运行安装脚本——它会从
+GitHub release 下载 esp-emulator 浏览器(wasm)构建到 `vendor/`(需要
+Python 3;有防火墙先设 `https_proxy`,如 `https_proxy=http://127.0.0.1:10809`):
+
+```bash
+./install.sh                 # Windows 下:install.bat
+python serve.py              # http://127.0.0.1:8080/esp-emu-peris.html
+```
+
+无需 npm/node——包内已带编译好的 UI。要换 esp-emulator 版本:
+`./install.sh --version 0.52.0`(或 `python tools/fetch_esp_emu.py --version 0.52.0`)。
 
 ## 能力与限制(实测结论,详见 docs/FEASIBILITY.zh-cn.md)
 

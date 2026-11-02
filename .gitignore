@@ -152,3 +152,10 @@ tests/firmware/peris_probe/build/
 
 # build output (compiled from src/ by tsc)
 /build/
+
+# esp-emulator browser (wasm) build fetched from GitHub releases by
+# tools/fetch_esp_emu.py (npm run build does this automatically)
+/vendor/
+
+# release packaging output (npm run package)
+/dist/

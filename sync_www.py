@@ -5,7 +5,8 @@ entry HTML, the peris/ tree and examples/. Existing stock files
 (index.html, app.js, worker.js, pkg/) are never touched.
 
 Usage: python sync_www.py [--www PATH] [--clean]
-       default www ../_tools/esp-emu-browser/www
+       default www vendor/esp-emu-browser/www (fetched from the
+       espressif/esp-emulator release by tools/fetch_esp_emu.py)
        --clean removes a previously synced peris/ from www first
 """
 import argparse
@@ -39,7 +40,9 @@ def sync(www, clean=False):
 
 
 def main():
-    default_www = os.path.normpath(os.path.join(REPO, '..', '_tools', 'esp-emu-browser', 'www'))
+    default_www = os.environ.get(
+        'ESP_EMU_WWW',
+        os.path.normpath(os.path.join(REPO, 'vendor', 'esp-emu-browser', 'www')))
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--www', default=default_www, help='esp-emu-browser www directory')
     ap.add_argument('--clean', action='store_true', help='remove old peris/ in www before copying')

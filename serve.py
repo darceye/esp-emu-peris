@@ -11,7 +11,9 @@ Routes:
     everything else             -> this repository
 
 Usage: python serve.py [port] [--www PATH]
-       default port 8080, default www ../_tools/esp-emu-browser/www
+       default port 8080, default www vendor/esp-emu-browser/www
+       (fetched from the espressif/esp-emulator release by
+        tools/fetch_esp_emu.py — npm run build does that automatically)
 """
 import argparse
 import os
@@ -58,14 +60,18 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def main():
-    default_www = os.path.normpath(os.path.join(REPO, '..', '_tools', 'esp-emu-browser', 'www'))
+    default_www = os.environ.get(
+        'ESP_EMU_WWW',
+        os.path.normpath(os.path.join(REPO, 'vendor', 'esp-emu-browser', 'www')))
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('port', nargs='?', type=int, default=8080)
     ap.add_argument('--www', default=default_www, help='esp-emu-browser www directory')
     args = ap.parse_args()
 
     if not os.path.isdir(os.path.join(args.www, 'pkg')):
-        print(f'error: {args.www}/pkg not found — pass --www /path/to/esp-emu-browser/www', file=sys.stderr)
+        print(f'error: {args.www}/pkg not found — run "python tools/fetch_esp_emu.py" '
+              f'(or "npm run build") first, or pass --www /path/to/esp-emu-browser/www',
+              file=sys.stderr)
         sys.exit(1)
     Handler.www_dir = args.www
 

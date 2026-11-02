@@ -6,6 +6,20 @@
 与英文版 CHANGELOG.md)。
 规则:主版本=协议/架构破坏性变更;次版本=新能力;修订=修复与小改。
 
+## peris 0.10.1
+
+- **不再依赖本机绝对路径**:esp-emulator 浏览器(wasm)构建改由新增的
+  `tools/fetch_esp_emu.py` 按需从 `espressif/esp-emulator` 的 GitHub
+  release 下载到 `vendor/esp-emu-browser/`——`npm run build` / `npm test`
+  首次运行自动触发。支持代理(`https_proxy`)、按 release `SHA256SUMS`
+  做 sha256 校验、tarball 缓存在 `vendor/downloads/`、幂等;`--version
+  <版本>` 可切换基线(见 UPGRADE.zh-cn.md)。`serve.py` / `sync_www.py` /
+  测试默认指向该目录(`--www` / `ESP_EMU_WWW` 可覆盖)。
+- **发布打包**:`npm run package`(`tools/package_release.py`)生成面向
+  GitHub release 页面的 `esp-emu-peris-<版本>.zip` / `.tar.gz`;包内自带
+  编译好的 UI 与 `install.sh` / `install.bat` 安装脚本(负责下载
+  esp-emulator 浏览器构建)——release 用户只需 Python 3,无需 npm/node。
+
 ## peris 0.10.0
 
 - **逻辑分析仪**(`logic-analyzer.js` v1.0.0,逻辑在 `la-lib.js`):面向固件

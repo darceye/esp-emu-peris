@@ -8,6 +8,23 @@ CHANGELOG.zh-cn.md).
 Rules: major = breaking protocol/architecture change; minor = new capability;
 patch = fixes and small changes.
 
+## peris 0.10.1
+
+- **No more machine-local absolute paths**: the esp-emulator browser (wasm)
+  build is fetched on demand from the `espressif/esp-emulator` GitHub
+  release into `vendor/esp-emu-browser/` by the new
+  `tools/fetch_esp_emu.py` — `npm run build` / `npm test` trigger it
+  automatically on first run. Proxy-aware (`https_proxy`), sha256-verified
+  against the release `SHA256SUMS`, cached in `vendor/downloads/`,
+  idempotent; `--version <ver>` switches the baseline (see UPGRADE.md).
+  `serve.py` / `sync_www.py` / the tests default to the vendored copy
+  (override with `--www` / `ESP_EMU_WWW`).
+- **Release packaging**: `npm run package` (`tools/package_release.py`)
+  builds `esp-emu-peris-<ver>.zip` / `.tar.gz` for the GitHub release page;
+  the archives ship the UI pre-compiled plus `install.sh` / `install.bat`,
+  which fetch the esp-emulator browser build — a release user needs only
+  Python 3, no npm/node.
+
 ## peris 0.10.0
 
 - **Logic analyzer** (`logic-analyzer.js` v1.0.0, logic in `la-lib.js`):

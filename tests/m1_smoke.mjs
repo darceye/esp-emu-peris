@@ -50,7 +50,11 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const WWW = 'D:/d3/_git/esp_proj/_tools/esp-emu-browser/www';
+const WWW = process.env.ESP_EMU_WWW || path.join(REPO, 'vendor', 'esp-emu-browser', 'www');
+if (!existsSync(path.join(WWW, 'pkg', 'esp_emu.js'))) {
+    console.error(`error: ${path.join(WWW, 'pkg', 'esp_emu.js')} not found — run "npm run build" (or "python tools/fetch_esp_emu.py") first, or set ESP_EMU_WWW`);
+    process.exit(1);
+}
 const FW = process.argv[2] ?? path.join(REPO, 'tests/firmware/peris_probe/build/merged-binary.bin');
 
 const { initSync, WasmEmulator } = await import(
@@ -597,7 +601,8 @@ check('S6 unknown type rejected', ready3?.ok === false && ready3.errors.some((e)
 // decode 0xFF (Code B), scan-limit 7, intensity 4, eight blank digits,
 // shutdown 1 — 14 register words, then the control task pushes values
 // once WiFi is up (display_show → display_tick → non-zero digits).
-const GUN_FW = 'D:/d3/_git/esp_proj/gun_flag_monster/gun/release/0.1.0/gun-0.1.0-merged.bin';
+// optional machine-local firmware: set GUN_FW to run this section elsewhere
+const GUN_FW = process.env.GUN_FW || 'D:/d3/_git/esp_proj/gun_flag_monster/gun/release/0.1.0/gun-0.1.0-merged.bin';
 if (existsSync(GUN_FW)) {
     const emu2 = new WasmEmulator('esp32s3');
     if (emu2.has_default_rom()) emu2.load_default_rom();

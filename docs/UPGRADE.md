@@ -4,15 +4,18 @@
 
 ## Pinned baseline
 
-Current baseline: **esp-emulator v0.51.0** (`_tools/esp-emu-browser/www/pkg`,
-wasm-bindgen `--target web`).
+Current baseline: **esp-emulator v0.51.0** (`vendor/esp-emu-browser/www/pkg`,
+fetched from the GitHub release by `tools/fetch_esp_emu.py`, wasm-bindgen
+`--target web`).
 
 ## Upgrade steps
 
-1. Download the new wasm package (e.g. `esp-emu-<ver>-wasm.tar.gz`) and
-   unpack the new `www/` (`_tools` already has
-   `update_esp_emu_browser.bat`, currently empty — fill it following this
-   procedure).
+1. Fetch the new wasm package:
+   `python tools/fetch_esp_emu.py --version <ver>` — downloads
+   `esp-emu-<ver>-wasm.tar.gz` from the espressif/esp-emulator GitHub
+   release and unpacks its `www/` into `vendor/esp-emu-browser/www`
+   (honours `https_proxy`; bump `DEFAULT_VERSION` in the script afterwards).
+   Alternatively point `ESP_EMU_WWW=/path/to/new/www` at any unpacked copy.
 2. **Run the M0 probe first**: `node tests/m0_probe.mjs <firmware path
    unchanged; run straight against the pkg>`. The probe imports the new
    `pkg/esp_emu.js` directly; if any of the six conclusions

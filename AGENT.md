@@ -10,10 +10,12 @@ verification method learned so far. **Read it fully before touching anything.**
 
 ```bash
 npm install                # typescript via npmmirror (see §1)
-npm run build              # tsc: src/ → build/ (mandatory after src changes; build/ not in git)
+npm run build              # prebuild fetches the esp-emulator browser build into
+                           # vendor/esp-emu-browser/ on first run, then tsc: src/ → build/
+                           # (mandatory after src changes; build/ not in git)
 npm test                   # unit tests + integration smoke
 npm run serve              # http://127.0.0.1:8080/esp-emu-peris.html
-npm run sync               # publish into _tools/esp-emu-browser/www (build first; --clean removes stale output)
+npm run sync               # publish into vendor/esp-emu-browser/www (build first; --clean removes stale output)
 ```
 
 Architecture & data flow: `docs/ARCHITECTURE.md`; peripheral development:
@@ -28,6 +30,13 @@ and `docs/FEASIBILITY.md` (M0 measurements).
   `https://registry.npmmirror.com/<pkg>/-/<name>-<ver>.tgz` and unpack
   (that is how xterm was vendored into `peris/vendor/`; the package ships the
   **unminified** build, no .min).
+- **GitHub downloads need the local proxy**:
+  `https_proxy=http://127.0.0.1:10809`. The esp-emulator browser (wasm)
+  build is fetched from the espressif/esp-emulator GitHub release by
+  `tools/fetch_esp_emu.py` (runs automatically on `npm run build`/`npm test`;
+  honours `https_proxy`; sha256-verified; cached in `vendor/downloads/`;
+  unpacked into `vendor/esp-emu-browser/www`). Override the location with
+  `ESP_EMU_WWW=/path/to/www`.
 - **Playwright browser binaries** not installed (network); to install:
   `PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright`.
 - **ESP-IDF**: master checkout at `C:\esp\master\esp-idf`; enable the
