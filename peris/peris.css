@@ -481,9 +481,11 @@
     border: 1px solid var(--border-strong); border-radius: 4px; cursor: pointer;
     transition: color 0.1s, border-color 0.1s;
 }
-.la-chan:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.la-chan:hover { border-color: var(--accent); color: var(--text); }
 .la-chan.on { color: var(--accent-text); border-color: var(--accent); background: var(--accent-soft); }
-.la-chan:disabled { opacity: 0.35; cursor: not-allowed; text-decoration: line-through; }
+/* pads owned by another device: pickable (a probe disturbs nothing),
+   just visually marked as shared */
+.la-chan.shared { border-style: dashed; color: var(--faint); }
 .la-plot { flex: 1; min-height: 0; position: relative; background: var(--bg);
     border-bottom: 1px solid var(--border); overflow: hidden;
     touch-action: none; outline: none; cursor: crosshair; }

@@ -862,6 +862,33 @@ test('runtime: sharedBus devices share pins; non-bus devices still conflict', as
     assert.equal(rt.has('led'), true);
 });
 
+test('runtime: passive probes overlap ANY device without a conflict', async () => {
+    const rt = new PerisRuntime();
+    const msgs = [];
+    rt.post = (m) => msgs.push(m);
+    rt.registry = {
+        has: (t) => ['led', 'i2c', 'la'].includes(t),
+        meta: (t) => (t === 'led' ? ledMod.Device : t === 'i2c' ? i2c.Device : la.Device),
+        View: () => null,
+        types: () => [],
+        errors: [],
+    };
+    // a probe clamped onto a plain LED pad, an I2C pair AND another probe
+    msgs.length = 0;
+    await rt.applyConfig({
+        perisVersion: 1,
+        devices: [
+            { id: 'led', type: 'led', pin: 8 },
+            { id: 'ee', type: 'i2c', scl: 1, sda: 2 },
+            { id: 'la1', type: 'la', pins: [8, 1, 2] },
+            { id: 'la2', type: 'la', pins: [8] },
+        ],
+    });
+    const ready = msgs.find((m) => m.type === 'peris_ready');
+    assert.equal(ready.ok, true, ready.errors.join('; '));
+    assert.equal(rt.has('la1') && rt.has('la2') && rt.has('led'), true);
+});
+
 // ---------------------------------------------------------------------------
 // Logic analyzer (0.10.0): la-lib readout math + the capture state machine
 
@@ -908,11 +935,11 @@ test('la-lib: axis ticks, formatting, fit span and the pixel transform', () => {
     assert.ok(Math.abs(xToUs(usToX(123)) - 123) < 1e-9);
 });
 
-test('logic-analyzer: meta validation, pin claim, sharedBus probe semantics', () => {
+test('logic-analyzer: meta validation, pin claim, passive probe semantics', () => {
     assert.equal(validateDeviceModule(la), null);
     assert.deepEqual(la.Device.pins({ pins: [1, 2] }), [1, 2]);
     assert.deepEqual(la.Device.pins({ pins: [] }), []);
-    assert.equal(la.Device.sharedBus, true, 'a probe taps lines other bus devices drive');
+    assert.equal(la.Device.passive, true, 'a probe only listens — it claims no pad');
 });
 
 test('logic-analyzer: immediate capture records edges, freezes at window end', () => {
@@ -960,17 +987,17 @@ test('logic-analyzer: immediate capture records edges, freezes at window end', (
     assert.equal(leases.released >= 2, true);
 });
 
-test('logic-analyzer: channel trigger — direction, wrong channel, t0 at the edge', () => {
+test('logic-analyzer: GPIO trigger — direction, other pads, t0 at the edge', () => {
     const { ctx, leases } = makeDevCtx({ levels: { 4: false, 5: false } });
     const dev = new la.Device(ctx, {
-        id: 'la', type: 'logic-analyzer', pins: [4, 5], trigCh: 0, trigEdge: 'rise', durationMs: 5,
+        id: 'la', type: 'logic-analyzer', pins: [4, 5], trigPin: 4, trigEdge: 'rise', durationMs: 5,
     });
     dev.onCommand('arm');
     assert.equal(dev.getState().status, 'armed');
     assert.deepEqual(leases.armed, [la.ARM_BATCH], 'standing watch while waiting');
 
     dev.onPinState(4, { out: false, oe: true, cycles: 1000 }); // falling: ignored
-    dev.onPinState(5, { out: true, oe: true, cycles: 1500 });  // wrong channel
+    dev.onPinState(5, { out: true, oe: true, cycles: 1500 });  // not the trigger pad
     assert.equal(dev.getState().status, 'armed');
 
     dev.onPinState(4, { out: true, oe: true, cycles: 16000 }); // rising on GPIO4
@@ -989,9 +1016,39 @@ test('logic-analyzer: channel trigger — direction, wrong channel, t0 at the ed
     dev.destroy();
 });
 
+test('logic-analyzer: trigger GPIO may sit outside the analysed channels', () => {
+    const { ctx } = makeDevCtx({ levels: { 5: false } });
+    const dev = new la.Device(ctx, { id: 'la', type: 'logic-analyzer', pins: [5], trigPin: 4, trigEdge: 'rise' });
+    dev.onCommand('arm');
+    assert.equal(dev.getState().status, 'armed');
+    dev.onPinState(5, { out: true, oe: true, cycles: 1000 }); // channel edge ≠ trigger
+    assert.equal(dev.getState().status, 'armed');
+    dev.onPinState(4, { out: true, oe: true, cycles: 2000 }); // off-channel trigger fires
+    let st = dev.getState();
+    assert.equal(st.status, 'run');
+    assert.equal(st.triggered, true);
+    assert.equal(st.channels.join(), '5', 'only the analysed channel is recorded');
+    ctx.setCycles(2000 + 50 * 1000 * 160 + 1); // default 50 ms window
+    dev.onBatch();
+    st = dev.getState();
+    assert.equal(st.status, 'done');
+    assert.deepEqual(st.edges[0], [], 'the off-channel trigger edge lands in no lane');
+    assert.deepEqual(st.initial, [0], 'channel levels still snapshot via pinLevel');
+    dev.destroy();
+});
+
+test('logic-analyzer: window clamps up to 1 h of guest time', () => {
+    const { ctx } = makeDevCtx();
+    const dev = new la.Device(ctx, { id: 'la', type: 'logic-analyzer', pins: [1], durationMs: 999999999 });
+    assert.equal(dev.windowMs, 3600000, 'huge windows clamp at 1 h, not 1 s');
+    dev.onCommand('arm');
+    assert.equal(dev.getState().windowUs, 3600000 * 1000);
+    dev.destroy();
+});
+
 test('logic-analyzer: falling trigger counts a release-to-Z as an edge', () => {
     const { ctx } = makeDevCtx({ levels: { 7: true } });
-    const dev = new la.Device(ctx, { id: 'la', type: 'logic-analyzer', pins: [7], trigCh: 0, trigEdge: 'fall' });
+    const dev = new la.Device(ctx, { id: 'la', type: 'logic-analyzer', pins: [7], trigPin: 7, trigEdge: 'fall' });
     dev.onCommand('arm');
     dev.onPinState(7, { out: true, oe: true, cycles: 100 });
     assert.equal(dev.getState().status, 'armed', 'rising ignored');
@@ -1026,7 +1083,7 @@ test('logic-analyzer: stop / clear / auto re-arm / auto+immediate warns', () => 
     // stop while merely armed disarms without touching data
     {
         const { ctx } = makeDevCtx();
-        const dev = new la.Device(ctx, { id: 'la', type: 'logic-analyzer', pins: [2], trigCh: 0 });
+        const dev = new la.Device(ctx, { id: 'la', type: 'logic-analyzer', pins: [2], trigPin: 2 });
         dev.onCommand('arm');
         assert.equal(dev.getState().status, 'armed');
         dev.onCommand('stop');
@@ -1036,7 +1093,7 @@ test('logic-analyzer: stop / clear / auto re-arm / auto+immediate warns', () => 
     // auto re-arm with a trigger: after done → armed again
     {
         const { ctx, leases } = makeDevCtx({ levels: { 3: false } });
-        const dev = new la.Device(ctx, { id: 'la', type: 'logic-analyzer', pins: [3], trigCh: 0, durationMs: 1 });
+        const dev = new la.Device(ctx, { id: 'la', type: 'logic-analyzer', pins: [3], trigPin: 3, durationMs: 1 });
         dev.onCommand('arm', { auto: true });
         dev.onPinState(3, { out: true, oe: true, cycles: 1000 });
         ctx.setCycles(1000 + 1000 * 160 + 1);

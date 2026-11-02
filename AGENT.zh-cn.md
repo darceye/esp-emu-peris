@@ -117,7 +117,9 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
    View 必须实现 `destroy()`(面板在行移除与列表重建时调用),多引脚选择
    器必须基于 `host.pinInfo()` 构建——与通用编辑器同一份、按候选设备感知
    的引脚集合,禁止另抄一份。`ctx.pinLevel(pin)` 只用于快照式读取当前驱动
-   电平;变化流仍然走 `onPinState`。
+   电平;变化流仍然走 `onPinState`。纯监听设备声明 `static passive =
+   true`(0.11):runtime 的冲突检测与线与仲裁跳过其焊盘,其他设备的引脚
+   选择器也不把它们显示为已占用——探针可搭接任意位置,主动设备不行。
 
 ## 4. 曾踩过的 bug(防止回潮)
 

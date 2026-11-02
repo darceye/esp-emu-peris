@@ -148,7 +148,9 @@ export class PerisPanel {
     /**
      * Pins claimed by other devices, from the perspective of `candidate`
      * (the device about to use the set): sharedBus devices ignore each
-     * other's pins — two I2C slaves on one bus is legal wiring.
+     * other's pins — two I2C slaves on one bus is legal wiring. Passive
+     * probes (logic analyzer) claim nothing: their pads never show as
+     * "in use" for anyone.
      */
     private usedPins(exceptId: string, candidate?: DeviceMeta | null): Set<number> {
         const used = new Set<number>();
@@ -156,6 +158,7 @@ export class PerisPanel {
             if (d.id === exceptId) continue;
             const meta = this.registry?.meta(d.type);
             if (!meta) continue;
+            if (meta.passive) continue;
             if (candidate?.sharedBus && meta.sharedBus) continue;
             for (const p of meta.pins(d)) used.add(p);
         }

@@ -8,6 +8,44 @@ CHANGELOG.zh-cn.md).
 Rules: major = breaking protocol/architecture change; minor = new capability;
 patch = fixes and small changes.
 
+## peris 0.11.0
+
+- **Logic analyzer probes anything** (`logic-analyzer.js` v1.1.0): the new
+  `static passive = true` device metadata marks a pure listener — it never
+  drives an input and claims no pad, so it may clamp onto ANY GPIO,
+  including pads other devices own (an LED, an I2C pair, a MAX7219 bus)
+  and other analyzers. The runtime's conflict check skips passive pads,
+  they stay out of the wired-AND arbitration, and other devices' pin
+  pickers no longer show them as "in use"; the analyzer's channel grid
+  never disables a GPIO (pads owned elsewhere get a dashed "shared" hint).
+- **Trigger on any GPIO** (not only analysed channels): `trigCh` (channel
+  index) becomes `trigPin` (GPIO number) — the trigger pad gets its own
+  subscription and need not be a channel; the window dropdown lists every
+  valid GPIO. Visibility caveat, surfaced in the tooltip: a trigger fires
+  only when the FIRMWARE drives the pad (gpio_state shows CPU GPIO
+  writes) — pure-input pads driven by our button devices never toggle.
+- **Window cap lifted**: 1 s → **1 h** of guest time (was a conservative
+  guard). Dense signals still freeze earlier at the 20 000-edge buffer
+  with the `buffer full` note — that is the natural limit (Saleae streams
+  into host RAM, we capture into a fixed buffer); quiet signals can now
+  record for minutes.
+- Tests: passive sharing at the runtime level (probe onto an LED pad +
+  I2C pair + second probe, no conflicts), off-channel trigger (edge lands
+  in no lane, channel levels still snapshot), 1 h clamp, migrated
+  trigger cases. GUI: shared chip clickable, 23 trigger options
+  (Immediate + all 22 C3 GPIOs), 5000 ms window accepted.
+
+| device | version |
+|---|---|
+| led | 1.1.1 |
+| button / touch-button / toggle-switch | 1.1.0 |
+| pwm-led / rgb-led | 1.0.0 |
+| ws2812 | 1.0.0 |
+| bitbang-i2c-slave | 1.0.0 |
+| ir-nec | 1.0.0 |
+| max7219 | 1.0.0 |
+| logic-analyzer | 1.1.0 |
+
 ## peris 0.10.3
 
 - **`python serve.py` self-bootstraps**: when the default

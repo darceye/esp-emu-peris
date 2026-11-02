@@ -100,15 +100,18 @@ export class PerisRuntime {
 
                 // Pin conflict check (v1: one device per pin, any direction —
                 // except bus devices that declare sharedBus, which may share
-                // pins with each other: two I2C slaves on one SCL/SDA pair).
+                // pins with each other: two I2C slaves on one SCL/SDA pair.
+                // Passive probes (logic analyzer) only listen: they claim
+                // nothing and may overlap with ANY device).
                 const pins = meta.pins(cfg);
                 for (const p of pins) {
                     if (typeof p !== 'number' || p < 0 || p >= gpioCount(this.chip) || absentPins(this.chip).has(p)) {
                         errors.push(`${id}: pin ${String(p)} is not a valid ${this.chip} GPIO`);
                         continue;
                     }
+                    if (meta.passive) continue; // probe pads are not claims
                     const claim = usedPins.get(p);
-                    if (claim && !(claim.shared && meta.sharedBus)) {
+                    if (claim && !(claim.shared && (meta.sharedBus || meta.passive))) {
                         errors.push(`${id}: pin ${p} already used by ${claim.id}`);
                         continue;
                     }
@@ -132,11 +135,13 @@ export class PerisRuntime {
 
         // Open-drain arbitration map: pins claimed by more than one
         // sharedBus device (the conflict rule above already rejected
-        // mixed sharing).
+        // mixed sharing). Passive probes never drive an input, so they
+        // stay out of the wired-AND entirely.
         this.busPins = new Set();
         this.pulls = new Map();
         const claims = new Map<number, { shared: boolean }[]>();
         for (const { meta, cfg, instance } of this.devices.values()) {
+            if (meta.passive) continue;
             for (const p of meta.pins(cfg)) {
                 if (typeof p !== 'number') continue;
                 const list = claims.get(p) ?? [];

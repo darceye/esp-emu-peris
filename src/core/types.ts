@@ -112,6 +112,15 @@ export interface DeviceMeta {
      * Default false: one device per GPIO, either direction.
      */
     readonly sharedBus?: boolean;
+    /**
+     * Passive probes (0.10.1): the device only LISTENS (never drives an
+     * input, never claims a pad) — its pins overlap with ANY other device
+     * legally and occupy nothing (other devices' pin pickers ignore it).
+     * The logic analyzer is the pattern: clamping a probe next to an LED
+     * disturbs nothing. Implies sharedBus-level sharing plus overlap with
+     * non-bus devices.
+     */
+    readonly passive?: boolean;
     /** GPIO pins the device claims (conflict detection). Required. */
     pins(cfg: DeviceConfig): number[];
     new (ctx: DeviceCtx, cfg: DeviceConfig): DeviceLike;

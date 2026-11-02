@@ -2,21 +2,27 @@
 
 # Roadmap
 
-## Logic analyzer — shipped in peris 0.10.0
+## Logic analyzer — shipped in peris 0.10.0, probe freedoms in 0.11.0
 
 - ✅ `logic-analyzer.js`: multi-channel GPIO waveform capture (up to 8
   pads, one trigger: channel + edge or Immediate, guest-time window,
   auto re-arm). Driven levels 1/0, released pads Z, times in guest µs.
   Rides the M4 scheduler (arm 1000 watch, fine lease per `resolution`
   preset: 20/100/300); 20 000-edge buffer freezes with an `overflow`
-  flag. Shared logic in `peris/devices/la-lib.js`; `sharedBus` makes it a
-  pure tap on other bus devices' pads.
+  flag. Shared logic in `peris/devices/la-lib.js`.
+- ✅ 0.11 probe freedoms: `static passive = true` — a probe listens only,
+  claims no pad and may clamp onto ANY in-use GPIO (conflict check and
+  wired-AND skip passive pads; other devices' pickers ignore them; the
+  channel grid never disables a GPIO). Trigger became `trigPin` (any GPIO,
+  independently subscribed, off-channel triggers fine); the window cap
+  lifted to 1 h of guest time (the edge buffer is the natural limit).
 - ✅ Floating analyzer window: draggable, resizable, non-modal popup
   (fixed position, no backdrop — the page underneath keeps working);
   geometry persisted. One `drawWaveform` painter feeds the popup, the
   details mini-preview and the row icon; channels picked from a GPIO grid
-  (`host.pinInfo()` disables occupied pins). Framework: `ctx.pinLevel`,
-  `ViewHost.pinInfo`, `View.destroy` (row removal/rebuild teardown).
+  (occupied pins shown as shared, never disabled). Framework:
+  `ctx.pinLevel`, `ViewHost.pinInfo`, `View.destroy` (row
+  removal/rebuild teardown).
 - ✅ Saleae-style plot interactions: wheel zoom anchored at the cursor,
   drag pan, double-click/F fit; hover measurement shades the pulse and
   reads level · width · period · frequency · PWM duty; A/B cursors with

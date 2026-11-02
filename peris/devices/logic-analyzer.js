@@ -43,27 +43,31 @@ const clampNum = (v, dflt, lo, hi) => {
 
 export class Device {
     static typeId = 'logic-analyzer';
-    static version = '1.0.0';
+    static version = '1.1.0';
     static title = 'Logic analyzer';
     static category = 'instrument';
     static description = 'Multi-GPIO waveform capture — click the row icon (or the preview) for the draggable analyzer window; trigger, window and resolution configurable.';
     static defaultConfig = {
-        name: 'LA', pins: [], durationMs: 50, resolution: 'normal', trigCh: -1, trigEdge: 'any',
+        name: 'LA', pins: [], durationMs: 50, resolution: 'normal', trigPin: -1, trigEdge: 'any',
     };
-    /* A probe taps lines without driving them: sharing pads with other bus
-     * devices (I2C lines, MAX7219 buses, other analyzers) is legal wiring. */
-    static sharedBus = true;
+    /* A probe only listens — it never drives an input and claims no pad, so
+     * it may clamp onto ANY GPIO, including pads other devices own (an LED,
+     * an I2C pair, a MAX7219 bus) and other analyzers. */
+    static passive = true;
     static pins(cfg) { return parsePins(cfg.pins); }
     static configSchema = [
-        { key: 'durationMs', label: 'Window (ms)', type: 'number', min: 1, max: 1000, step: 1 },
+        // window cap = 1 h of guest time; a dense signal hits the edge
+        // buffer long before and freezes flagged `overflow` (the natural
+        // limit — Saleae streams, we capture into a fixed buffer)
+        { key: 'durationMs', label: 'Window (ms)', type: 'number', min: 1, max: 3600000, step: 1 },
         { key: 'resolution', label: 'Resolution', type: 'select', options: [
             { value: 'fine', label: 'Fine — tightest pulses (slowest)' },
             { value: 'normal', label: 'Normal (default)' },
             { value: 'coarse', label: 'Coarse — fastest' },
         ] },
         { key: 'name', label: 'Label', type: 'text' },
-        // channels (pins), trigger channel/edge are edited in the analyzer
-        // window (they need the channel picker); they live in defaultConfig
+        // channels (pins), trigger pin/edge are edited in the analyzer
+        // window (they need the pickers); they live in defaultConfig
         // so normaliseConfig keeps them across config round-trips
     ];
 
@@ -71,10 +75,15 @@ export class Device {
         this.ctx = ctx;
         this.cfg = cfg;
         this.pins = parsePins(cfg.pins);
-        this.windowMs = clampNum(cfg.durationMs, 50, 1, 1000);
+        this.windowMs = clampNum(cfg.durationMs, 50, 1, 3600000);
         this.fine = FINE_BATCHES[cfg.resolution] ?? FINE_BATCHES.normal;
-        const tc = Number(cfg.trigCh);
-        this.trigCh = Number.isInteger(tc) && tc >= 0 && tc < this.pins.length ? tc : -1;
+        // trigger GPIO: any pad (it gets its own subscription), not only an
+        // analysed channel; -1 = Immediate. Note gpio_state() visibility:
+        // a trigger fires only when the FIRMWARE drives the pad (CPU GPIO
+        // writes) — pure-input pads (driven by our button devices) never
+        // toggle the output registers, so they cannot trigger.
+        const tp = Number(cfg.trigPin);
+        this.trigPin = Number.isInteger(tp) && tp >= 0 ? tp : -1;
         this.trigEdge = ['any', 'rise', 'fall'].includes(cfg.trigEdge) ? cfg.trigEdge : 'any';
         this.autoRun = false;   // session control (Arm button), not config
 
@@ -91,7 +100,9 @@ export class Device {
         this.lastEdgeCycles = -1;
         this.lastMarkCycles = 0;
         this.cpus = ctx.cyclesPerUs || 160;
-        if (this.pins.length) ctx.subscribe(this.pins);
+        const watch = this.trigPin >= 0 && !this.pins.includes(this.trigPin)
+            ? [...this.pins, this.trigPin] : this.pins;
+        if (watch.length) ctx.subscribe(watch);
     }
 
     onEmuReady() {
@@ -107,10 +118,10 @@ export class Device {
     onPinState(pin, s) {
         const level = s.oe ? (s.out ? 1 : 0) : -1;
         if (this.status === 'armed') {
-            // trigger watch: the edge must sit on the trigger channel and
+            // trigger watch: the edge must sit on the trigger GPIO and
             // match the direction (rising arrives as level 1; a release to
             // Z counts as falling, the open-drain idiom)
-            if (pin !== this.pins[this.trigCh]) return;
+            if (pin !== this.trigPin) return;
             if (this.trigEdge === 'rise' && level !== 1) return;
             if (this.trigEdge === 'fall' && level !== 0 && level !== -1) return;
             this._start(s.cycles, { pin, level });
@@ -153,7 +164,7 @@ export class Device {
             if (this.status === 'run' || this.status === 'armed') return;
             this.autoRun = !!(params && params.auto);
             this.overflow = false;
-            if (this.trigCh >= 0 && this.pins.length) {
+            if (this.trigPin >= 0) {
                 this.status = 'armed';
                 this.ctx.armSampling(ARM_BATCH);
             } else {
@@ -253,7 +264,7 @@ export class Device {
         this.capturedUs = Math.min(this.windowMs * 1000,
             Math.max(0, (this.ctx.cycles() - this.t0) / this.cpus));
         if (this.autoRun) {
-            if (this.trigCh >= 0 && this.pins.length) {
+            if (this.trigPin >= 0) {
                 this.status = 'armed'; // wait for the next trigger
                 this.ctx.armSampling(ARM_BATCH);
             } else {
@@ -282,7 +293,7 @@ export class View {
         this.el = el;
         this.send = sendCmd;
         this.host = host;
-        this.cfg = { name: 'LA', pins: [], durationMs: 50, resolution: 'normal', trigCh: -1, trigEdge: 'any' };
+        this.cfg = { name: 'LA', pins: [], durationMs: 50, resolution: 'normal', trigPin: -1, trigEdge: 'any' };
         this.state = null;
         this.autoUI = false;  // session Auto re-arm checkbox (an Arm control)
         this.hover = null;
@@ -382,9 +393,9 @@ export class View {
         this.cfg = {
             name: String(cfg.name ?? 'LA'),
             pins: parsePins(cfg.pins),
-            durationMs: clampNum(cfg.durationMs, 50, 1, 1000),
+            durationMs: clampNum(cfg.durationMs, 50, 1, 3600000),
             resolution: FINE_BATCHES[cfg.resolution] ? cfg.resolution : 'normal',
-            trigCh: Number.isInteger(Number(cfg.trigCh)) ? Number(cfg.trigCh) : -1,
+            trigPin: Number.isInteger(Number(cfg.trigPin)) ? Number(cfg.trigPin) : -1,
             trigEdge: ['any', 'rise', 'fall'].includes(cfg.trigEdge) ? cfg.trigEdge : 'any',
         };
         if (this.win) {
@@ -433,9 +444,9 @@ export class View {
         trigLab.className = 'la-lab';
         trigLab.textContent = 'Trigger';
         this.trigSel = document.createElement('select');
-        this.trigSel.title = 'Capture starts on this channel\'s edge (Immediate = start at Arm)';
+        this.trigSel.title = 'Capture starts on this GPIO\'s edge — any pad works, not only analysed channels (Immediate = start at Arm). The trigger needs the FIRMWARE to drive the pad; pure-input pads never toggle the output registers';
         this.trigSel.addEventListener('change', () =>
-            this.host.updateConfig({ trigCh: Number(this.trigSel.value) }));
+            this.host.updateConfig({ trigPin: Number(this.trigSel.value) }));
         this.edgeSel = document.createElement('select');
         for (const [v, l] of [['any', 'any edge'], ['rise', 'rising'], ['fall', 'falling']]) {
             const o = document.createElement('option');
@@ -453,10 +464,10 @@ export class View {
         winLab.textContent = 'Window';
         this.winInput = document.createElement('input');
         this.winInput.type = 'number';
-        this.winInput.min = '1'; this.winInput.max = '1000'; this.winInput.step = '1';
-        this.winInput.title = 'Capture window length in guest milliseconds (emulator time is not wall time)';
+        this.winInput.min = '1'; this.winInput.max = '3600000'; this.winInput.step = '1';
+        this.winInput.title = 'Capture window length in guest milliseconds (emulator time is not wall time). Dense signals freeze earlier at the 20 000-edge buffer (shown as buffer full)';
         this.winInput.addEventListener('change', () =>
-            this.host.updateConfig({ durationMs: clampNum(this.winInput.value, 50, 1, 1000) }));
+            this.host.updateConfig({ durationMs: clampNum(this.winInput.value, 50, 1, 3600000) }));
         const winMs = document.createElement('span');
         winMs.className = 'la-lab';
         winMs.textContent = 'ms';
@@ -589,22 +600,26 @@ export class View {
         const imm = document.createElement('option');
         imm.value = '-1'; imm.textContent = 'Immediate';
         this.trigSel.appendChild(imm);
-        for (let i = 0; i < c.pins.length; i++) {
+        // any valid GPIO may trigger — not only analysed channels, and
+        // including pads other devices own (a probe just listens)
+        const valid = this.host?.pinInfo?.()?.valid ?? c.pins.slice().sort((a, b) => a - b);
+        for (const p of valid) {
             const o = document.createElement('option');
-            o.value = String(i);
-            o.textContent = `GPIO${c.pins[i]}`;
+            o.value = String(p);
+            o.textContent = `GPIO${p}`;
             this.trigSel.appendChild(o);
         }
-        const tc = c.trigCh >= 0 && c.trigCh < c.pins.length ? c.trigCh : -1;
-        this.trigSel.value = String(tc);
+        const tp = c.trigPin >= 0 && valid.includes(c.trigPin) ? c.trigPin : -1;
+        this.trigSel.value = String(tp);
         this.edgeSel.value = c.trigEdge;
         this.winInput.value = String(c.durationMs);
         this.resSel.value = c.resolution;
         this.autoCb.checked = this.autoUI;
     }
 
-    /* Channel chips from the panel's candidate-aware pin info — pins used by
-     * other non-bus devices are disabled, shared bus pads stay pickable. */
+    /* Channel chips from the panel's pin info. A probe claims nothing, so
+     * NO GPIO is ever disabled — pads other devices own just get a "shared"
+     * hint (clamping a probe next to an LED disturbs nothing). */
     _renderChans() {
         if (!this.win) return;
         const el = this.chansEl;
@@ -614,16 +629,13 @@ export class View {
         const used = info ? info.used : new Set();
         for (const p of valid) {
             const on = this.cfg.pins.includes(p);
-            const taken = !on && used.has(p);
+            const shared = !on && used.has(p);
             const chip = document.createElement('button');
             chip.type = 'button';
-            chip.className = 'la-chan' + (on ? ' on' : '');
+            chip.className = 'la-chan' + (on ? ' on' : '') + (shared ? ' shared' : '');
             chip.textContent = String(p);
-            chip.title = taken
-                ? `GPIO${p} — used by another device`
-                : `GPIO${p} — click to ${on ? 'remove' : 'add'}`;
-            if (taken) chip.disabled = true;
-            else chip.addEventListener('click', () => {
+            chip.title = `GPIO${p} — click to ${on ? 'remove' : 'add'}` + (shared ? ' (shared with another device — harmless for a probe)' : '');
+            chip.addEventListener('click', () => {
                 const pins = this.cfg.pins.filter((x) => x !== p);
                 if (!on) {
                     if (pins.length >= MAX_CHANNELS) return;
@@ -678,7 +690,7 @@ export class View {
 
         let text;
         if (s === 'idle') text = 'idle — Arm to capture';
-        else if (s === 'armed') text = `armed — waiting for trigger: GPIO${this.cfg.pins[this.cfg.trigCh] ?? '?'} ${this.cfg.trigEdge}`;
+        else if (s === 'armed') text = `armed — waiting for trigger: GPIO${this.cfg.trigPin} ${this.cfg.trigEdge}`;
         else if (s === 'run') text = `capturing… ${fmtUs(st.capturedUs)} / ${fmtUs(st.windowUs)} · ${st.totalEdges} edges`;
         else text = `done · ${fmtUs(st.capturedUs)} · ${st.totalEdges} edges` + (st.overflow ? ' · buffer full (stopped early)' : '');
         this.foot.textContent = text
@@ -849,13 +861,16 @@ export class View {
         }, 220);
     }
 
-    /** Pan to the previous/next edge of the selected channel (zoom kept). */
+    /** Pan to the previous/next edge of the selected channel (zoom kept).
+     * Without a selection the trigger's channel is used when analysed,
+     * else channel 0. */
     _jumpEdge(dir) {
         const st = this.state;
         if (!st || !st.channels.length) return;
         let ch = this.selCh;
         if (ch == null || ch < 0 || ch >= st.channels.length) {
-            ch = this.cfg.trigCh >= 0 && this.cfg.trigCh < st.channels.length ? this.cfg.trigCh : 0;
+            const ti = this.cfg.trigPin >= 0 ? st.channels.indexOf(this.cfg.trigPin) : -1;
+            ch = ti >= 0 ? ti : 0;
         }
         const flat = st.edges[ch] ?? [];
         const times = [];

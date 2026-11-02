@@ -153,6 +153,10 @@ and `docs/FEASIBILITY.md` (M0 measurements).
    from `host.pinInfo()` — the same candidate-aware pin set the generic
    editor uses, never a forked copy. `ctx.pinLevel(pin)` reads the current
    driven level for snapshots only; the change stream stays `onPinState`.
+   Pure listeners declare `static passive = true` (0.11): the runtime's
+   conflict check and wired-AND skip their pads, and other devices' pin
+   pickers never show them as used — a probe clamps anywhere, an active
+   device does not.
 
 ## 4. Past bugs (prevent regressions)
 

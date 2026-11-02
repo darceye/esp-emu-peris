@@ -25,6 +25,10 @@ export class Device {          // runs in the worker, talks to the emulator
     static defaultConfig = {...};     // defaults for new instances
     static sharedBus = true;          // optional (M4): pins may overlap with
                                       //   OTHER sharedBus devices (bus wiring)
+    static passive = true;            // optional (0.11): pure listener — never
+                                      //   drives an input, claims no pad; may
+                                      //   overlap with ANY device, and other
+                                      //   devices' pin pickers ignore its pads
     static configSchema = [           // generic config editor fields (in the
                                   // expanded details, one per line)
         { key: 'pin',    label: 'GPIO pin', type: 'pin' },
@@ -192,18 +196,20 @@ level- or ratio-based, never absolute-µs. The M4 plugins follow both rules:
 ## Instrument devices (0.10.0)
 
 - `peris/devices/logic-analyzer.js` — multi-channel GPIO waveform capture
-  (up to 8 pads, one trigger: channel + rising/falling/any edge or
-  Immediate, guest-time window, auto re-arm). Readout math, the waveform
-  painter and the floating window live in `peris/devices/la-lib.js`; the
+  (up to 8 pads, one trigger: ANY GPIO + rising/falling/any edge or
+  Immediate, guest-time window up to 1 h, auto re-arm). Readout math, the
+  waveform painter and the floating window live in `peris/devices/la-lib.js`; the
   painter is one implementation shared by the popup, the details
   mini-preview and the row icon. Sampling rides the M4 scheduler like the
   bit-bang devices (arm lease while waiting for the trigger, fine lease
   renewed per edge while recording — the `resolution` config picks the
   fine batch: 20/100/300 instructions). Levels are 1/0 driven and -1 (Z)
   when the guest releases the pad; the analyzer never drives anything, so
-  it declares `sharedBus` and legally taps pads other bus devices own.
-  Capture data is pushed in full only when the buffer freezes (`done`);
-  run pushes carry progress + live per-channel edge counts.
+  it declares `passive` and legally taps pads ANY device owns (the trigger
+  pad gets its own subscription and need not be a channel; it fires only
+  when the firmware drives the pad — gpio_state never shows pure-input
+  pads). Capture data is pushed in full only when the buffer freezes
+  (`done`); run pushes carry progress + live per-channel edge counts.
 - **Floating windows** (`la-lib.makeFloatingWindow`): big UIs open a
   draggable, resizable, **non-modal** popup — `position: fixed`, no
   backdrop, so the page underneath keeps every pointer event. Geometry is
