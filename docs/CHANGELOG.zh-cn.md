@@ -6,6 +6,15 @@
 与英文版 CHANGELOG.md)。
 规则:主版本=协议/架构破坏性变更;次版本=新能力;修订=修复与小改。
 
+## peris 0.10.3
+
+- **`python serve.py` 自举**:默认的 `vendor/esp-emu-browser/www/pkg`
+  缺失时,serve.py 自动调用 `tools/fetch_esp_emu.py`(同一解释器,识别
+  `https_proxy`)下载后再启动服务——无需单独的安装步骤。自定义
+  `--www` 目标不会被自动下载填充,仍报错并提示 fetch 脚本。所有错误
+  提示里的 "先 npm run build" 字样已移除(release 包里没有 npm,该提示
+  有误导);`python tools/fetch_esp_emu.py` 是唯一的标准指引。
+
 ## peris 0.10.2
 
 - **全新 clone 后 `npm test` 不再崩溃**:m1 冒烟测试(与 M0 探针)在

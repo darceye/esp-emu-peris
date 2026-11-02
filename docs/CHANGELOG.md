@@ -8,6 +8,17 @@ CHANGELOG.zh-cn.md).
 Rules: major = breaking protocol/architecture change; minor = new capability;
 patch = fixes and small changes.
 
+## peris 0.10.3
+
+- **`python serve.py` self-bootstraps**: when the default
+  `vendor/esp-emu-browser/www/pkg` is missing, serve.py runs
+  `tools/fetch_esp_emu.py` itself (same interpreter, honours `https_proxy`)
+  and then starts serving — no separate install step. A custom `--www`
+  target is never auto-fetched into; it still errors with a pointer to
+  the fetch script. All "run npm run build first" hints were removed from
+  error messages (misleading in the release package, which has no npm);
+  `python tools/fetch_esp_emu.py` is the single canonical instruction.
+
 ## peris 0.10.2
 
 - **Fresh-clone `npm test` no longer crashes**: the m1 smoke test (and the
