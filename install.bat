@@ -4,17 +4,18 @@ rem from https://github.com/espressif/esp-emulator/releases into vendor\.
 rem Requires Python 3. Behind a firewall set the proxy env first, e.g.
 rem   set https_proxy=http://127.0.0.1:10809
 rem   install.bat
-setlocal
+setlocal EnableDelayedExpansion
 cd /d "%~dp0"
-where python >nul 2>nul
-if %errorlevel%==0 (
-    python tools\fetch_esp_emu.py %*
-    exit /b %errorlevel%
+rem "python" may resolve to a non-working Windows Store stub, so verify it.
+for %%P in (python python3) do (
+    where %%P >nul 2>nul
+    if not errorlevel 1 (
+        %%P -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" >nul 2>nul
+        if not errorlevel 1 (
+            %%P tools\fetch_esp_emu.py %*
+            exit /b !errorlevel!
+        )
+    )
 )
-where python3 >nul 2>nul
-if %errorlevel%==0 (
-    python3 tools\fetch_esp_emu.py %*
-    exit /b %errorlevel%
-)
-echo error: Python 3 is required (python or python3 on PATH) 1>&2
+echo error: Python 3.8+ is required (python or python3 on PATH) 1>&2
 exit /b 1
