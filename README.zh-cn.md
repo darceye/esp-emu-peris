@@ -4,6 +4,8 @@
 
 为乐鑫 [esp-emulator](https://github.com/espressif/esp-emulator) 浏览器形态(wasm)做的**模拟外设面板**:LED、按键、触摸按键、拨动开关、PWM/RGB 调光 LED……以插件方式不断添加,不需要改动官方 `www/` 里的任何基础文件。
 
+![screenshot](docs/screenshots/01.png)
+
 ```
 esp-emu-peris.html      入口页面(UART0 控制台 | 外设行式面板 | Debug,三栏同屏)
 src/                    TypeScript 源码(npm run build → build/)

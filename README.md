@@ -7,6 +7,8 @@
 touch buttons, toggle switches, PWM/RGB LEDs… — added as plugins, without
 touching any stock file in the official `www/`.
 
+![screenshot](docs/screenshots/01.png)
+
 ```
 esp-emu-peris.html      entry page (UART0 console | peripherals rows | Debug — three panes at once)
 src/                    TypeScript sources (npm run build → build/)
