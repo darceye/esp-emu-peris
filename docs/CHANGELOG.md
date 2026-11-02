@@ -8,6 +8,20 @@ CHANGELOG.zh-cn.md).
 Rules: major = breaking protocol/architecture change; minor = new capability;
 patch = fixes and small changes.
 
+## peris 0.10.2
+
+- **Fresh-clone `npm test` no longer crashes**: the m1 smoke test (and the
+  M0 probe) now skip with a clear explanation when the gitignored ESP-IDF
+  firmware artifact is absent instead of dumping an ENOENT stack trace;
+  an explicitly passed firmware path still hard-fails when missing.
+- **Release package is runtime-only** (`tools/package_release.py`
+  allowlist): exactly what `python serve.py` serves plus the installer —
+  entry html, compiled `build/`, `peris/`, `examples/`, `serve.py`,
+  `install.sh`/`install.bat` + `tools/fetch_esp_emu.py`, LICENSE, READMEs.
+  Sources/tests/docs stay in the git repo (122 → ~60 files).
+- `npm run serve` now fetches the esp-emulator browser build first
+  (`preserve` hook), so it works straight after `git clone` + `npm install`.
+
 ## peris 0.10.1
 
 - **No more machine-local absolute paths**: the esp-emulator browser (wasm)

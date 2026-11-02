@@ -6,6 +6,19 @@
 与英文版 CHANGELOG.md)。
 规则:主版本=协议/架构破坏性变更;次版本=新能力;修订=修复与小改。
 
+## peris 0.10.2
+
+- **全新 clone 后 `npm test` 不再崩溃**:m1 冒烟测试(与 M0 探针)在
+  gitignore 的 ESP-IDF 固件产物缺失时改为清晰说明后跳过,不再打印
+  ENOENT 堆栈;显式传入的固件路径缺失时仍报错退出。
+- **release 包改为纯运行时**(`tools/package_release.py` 白名单):只含
+  `python serve.py` 所需与安装脚本——入口 html、编译好的 `build/`、
+  `peris/`、`examples/`、`serve.py`、`install.sh`/`install.bat` +
+  `tools/fetch_esp_emu.py`、LICENSE、双语 README。源码/测试/文档留在
+  git 仓库(122 → 约 60 个文件)。
+- `npm run serve` 现在会先拉取 esp-emulator 浏览器构建(`preserve`
+  钩子),`git clone` + `npm install` 之后可直接运行。
+
 ## peris 0.10.1
 
 - **不再依赖本机绝对路径**:esp-emulator 浏览器(wasm)构建改由新增的

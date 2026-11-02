@@ -2,37 +2,44 @@
 """
 Build the esp-emu-peris release archives for the GitHub release page.
 
-Stages the repository (git-tracked files + the compiled build/ tree) into
-dist/package/esp-emu-peris-<version>/ and writes
-dist/release/esp-emu-peris-<version>.zip and .tar.gz.
+The package is RUNTIME-ONLY: exactly what `python serve.py` needs plus the
+installer that fetches the esp-emulator browser (wasm) build — no sources,
+tests or docs (those live in the git repo). A release user needs only
+Python 3, no npm/node.
 
-The archives include install.sh / install.bat, which fetch the
-esp-emulator browser (wasm) build from espressif/esp-emulator releases —
-so a release user needs no local esp-emulator checkout.
+Stages into dist/package/esp-emu-peris-<version>/ and writes
+dist/release/esp-emu-peris-<version>.zip and .tar.gz.
 
 Usage: python tools/package_release.py       (run "npm run build" first)
 """
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tarfile
 import zipfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(REPO, 'dist')
-EXTRA_DIRS = ['build']  # not in git, but shipped pre-compiled
+
+# the complete runtime package — everything `python serve.py` serves/needs
+FILES = [
+    'serve.py',                # dev server (repo files + /pkg from vendor)
+    'esp-emu-peris.html',      # entry page
+    'install.sh', 'install.bat',   # fetch the esp-emulator browser build
+    'tools/fetch_esp_emu.py',      # .. the actual downloader
+    'LICENSE',
+    'README.md', 'README.zh-cn.md',
+]
+DIRS = [
+    'build',                   # compiled UI (tsc output of src/)
+    'peris',                   # device plugins + styles + vendored xterm
+    'examples',                # importable wiring-config JSONs
+]
 
 
 def log(msg):
     print(f'[package_release] {msg}', flush=True)
-
-
-def tracked_files():
-    out = subprocess.run(['git', 'ls-files'], cwd=REPO, capture_output=True,
-                         text=True, check=True).stdout
-    return [line for line in out.splitlines() if line.strip()]
 
 
 def stage(version):
@@ -42,21 +49,17 @@ def stage(version):
         shutil.rmtree(stage_root)
     os.makedirs(stage_dir)
 
-    files = tracked_files()
-    skip = {'.gitignore', '.gitattributes'}  # not meaningful outside a repo
-    skip_prefixes = ('.vscode/',)  # IDE prefs carry machine-local paths
     copied = 0
-    for rel in files:
-        if rel in skip or rel.startswith(skip_prefixes):
-            continue
+    for rel in FILES:
         src = os.path.join(REPO, rel)
         if not os.path.isfile(src):
+            log(f'warning: {rel} missing — skipped')
             continue
         dst = os.path.join(stage_dir, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy2(src, dst)
         copied += 1
-    for d in EXTRA_DIRS:
+    for d in DIRS:
         src = os.path.join(REPO, d)
         if not os.path.isdir(src):
             log(f'warning: {d}/ missing — run "npm run build" first')

@@ -1,6 +1,6 @@
 {
     "name": "esp-emu-peris",
-    "version": "0.10.1",
+    "version": "0.10.2",
     "private": true,
     "type": "module",
     "description": "Simulated peripherals for the esp-emulator browser (wasm) build",
@@ -10,6 +10,7 @@
         "build": "tsc -p tsconfig.json",
         "check": "tsc -p tsconfig.json --noEmit",
         "serve": "python serve.py",
+        "preserve": "python tools/fetch_esp_emu.py",
         "sync": "python sync_www.py",
         "presync": "python tools/fetch_esp_emu.py",
         "test": "node --test tests/unit/core.test.mjs tests/unit/devices.test.mjs tests/unit/protocol.test.mjs && node tests/m1_smoke.mjs",

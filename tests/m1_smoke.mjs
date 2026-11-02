@@ -56,6 +56,18 @@ if (!existsSync(path.join(WWW, 'pkg', 'esp_emu.js'))) {
     process.exit(1);
 }
 const FW = process.argv[2] ?? path.join(REPO, 'tests/firmware/peris_probe/build/merged-binary.bin');
+if (!existsSync(FW)) {
+    if (process.argv[2]) {
+        console.error(`error: firmware not found: ${FW}`);
+        process.exit(1);
+    }
+    // gitignored build artifact — a fresh clone cannot run the smoke test
+    console.error(`SKIP m1_smoke: probe firmware ${path.relative(REPO, FW)} not found.`);
+    console.error('  It is a gitignored ESP-IDF build artifact. To run the smoke test,');
+    console.error('  build it with tests/firmware/build.ps1 + merge.ps1 (needs ESP-IDF,');
+    console.error('  see AGENT.md §1) or pass any merged image: node tests/m1_smoke.mjs <merged.bin>');
+    process.exit(0);
+}
 
 const { initSync, WasmEmulator } = await import(
     pathToFileURL(path.join(WWW, 'pkg/esp_emu.js')).href

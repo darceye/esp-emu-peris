@@ -27,7 +27,15 @@ if (!existsSync(path.join(WWW, 'pkg', 'esp_emu.js'))) {
     console.error(`error: ${path.join(WWW, 'pkg', 'esp_emu.js')} not found — run "npm run build" (or "python tools/fetch_esp_emu.py") first, or set ESP_EMU_WWW`);
     process.exit(1);
 }
-const FW = process.argv[2] ?? path.join(REPO, 'tests/firmware/peris_probe/build/merged-binary.bin');
+const FW = process.argv[2] && !process.argv[2].startsWith('--')
+    ? process.argv[2]
+    : path.join(REPO, 'tests/firmware/peris_probe/build/merged-binary.bin');
+if (!existsSync(FW)) {
+    console.error(`SKIP m0_probe: probe firmware ${path.relative(REPO, FW)} not found ` +
+        `(gitignored ESP-IDF artifact — build with tests/firmware/build.ps1, or pass one:` +
+        ` node tests/m0_probe.mjs <merged.bin>)`);
+    process.exit(0);
+}
 
 // --- ESP32-C3 MMIO map (from IDF soc headers, see docs/FEASIBILITY.md) ---
 const GPIO_BASE = 0x60004000;
