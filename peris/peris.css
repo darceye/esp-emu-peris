@@ -395,6 +395,10 @@
 .mx-icon { display: block; }
 .mx-cap { text-align: center; font-size: 10.5px; color: var(--faint); font-family: var(--mono); }
 
+/* ---- ILI9341 SPI display (canvas painted by ili9341-lib) -------------------- */
+
+.lcd-canvas { border: 1px solid var(--line, #444); background: #000; }
+
 /* ---- Logic analyzer (la-lib painter + floating window) ---------------------- */
 
 .la-body { display: flex; flex-direction: column; align-items: stretch; gap: 6px; font-size: 11px; }

@@ -47,8 +47,9 @@ export function ledcSignalMap(mmio) {
 /**
  * Scan every pad's GPIO_FUNCn_OUT_SEL_CFG register and return
  * { channel → pin } for the pads the firmware currently routes to an LEDC
- * channel (M0: the routing is readable; low 9 bits hold the signal id,
- * 0x100 = plain GPIO). One readU32 per pad — cheap next to a 50k-instruction
+ * channel (M0: the routing is readable; the field holds the signal id —
+ * plain GPIO reads 0x80 on the C3's 8-bit field, 0x100 on 9-bit chips,
+ * M5 correction). One readU32 per pad — cheap next to a 50k-instruction
  * batch. Returns an empty map when the chip has no MMIO table.
  */
 export function discoverLedcPins(ctx) {

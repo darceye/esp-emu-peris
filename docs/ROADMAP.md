@@ -37,7 +37,8 @@
 ## MAX7219 display — shipped in peris 0.9.0
 
 - ✅ `max7219.js`: the 8-digit LED driver on a firmware bit-banged
-  DIN/CLK/LOAD bus (hardware SPI stays invisible — M0). Level-driven shift
+  DIN/CLK/LOAD bus (hardware-SPI-wired variants became feasible in M5 —
+  TX is register/RAM-observable; a future device may ride it). Level-driven shift
   engine (MSB-first, words latched on the LOAD rising edge, misaligned
   frames dropped and counted, never garbled) + datasheet register model
   (Code B decode with independent DP, intensity PWM, scan limit,
@@ -116,19 +117,37 @@
 
 ## M5 · Upstream capability tracking (not under our control)
 
-These need APIs the wasm does not expose today; progress depends on new
-esp-emulator releases (upgrade procedure in UPGRADE.md):
+Revised 2026-11-02: the M5 investigation (FEASIBILITY.md "M5 measurements",
+probes `tests/m5_probe.mjs` / `m5_mem_probe.mjs` / `m5_wasm_static.mjs`)
+found **hardware SPI is modelled, observable and injectable at the register
+level** — it moved from ❌ to our own work queue. What genuinely still
+waits on esp-emulator releases (upgrade procedure in UPGRADE.md):
 
 | capability | required upstream interface | status |
 |---|---|---|
-| hardware I2C device models | i2c slave/device bridge API (CLI-only `--i2c-dev`, dumb registers only) | ❌ |
-| hardware SPI peripherals (SD card etc.) | spi device bridge | ❌ |
-| SPI/RGB565 displays | spi/lcd_cam (the peripheral itself is not emulated) | ❌ |
+| hardware SPI peripherals (SD card etc.) | ~~spi device bridge~~ — none needed: TX via DMA-buffer/W-window reads, RX via linear-memory W-field injection (hack-grade, proven) | ✅ ours to build (M5) |
+| SPI/RGB565 displays | TX-only displays straightforward (DMA-RAM + micro-batch W window); read-back paths need the injection hack; lcd_cam (RGB panel) still unmodelled | 🔶 TX-only |
+| hardware I2C device models | controller is modelled upstream (built-in EEPROM at 0x50, CLI `--i2c-dev`); browser register access should mirror SPI | 🔶 untested — probe like M5 |
 | real touch peripheral | touch peripheral emulation | ❌ (touch button stands in with GPIO semantics) |
 | ADC (potentiometers etc.) | adc emulation | ❌ |
 | I2S audio | i2s emulation | ❌ |
 | UART1 peripheral | wasm-exposed uart1 (CLI has `--uart1-tcp`) | ❌ |
 | state snapshot save/restore | save/load API | ❌ |
+
+SPI device work from M5 — **items 1–2 shipped in 0.12.0** (guide:
+[SPI-M5.md](SPI-M5.md)):
+
+1. ~~`spi-sniffer.js`~~ — delivered as `spi-lib.js` + device integrations:
+   the shared W-window engine / GDMA chain walk / wiring discovery power
+   the MAX7219 `hwspi` bus (v1.1.0) and the ILI9341 (v1.0.0). A standalone
+   protocol-analyzer view over the same stream remains a nice-to-have.
+2. ~~SPI display devices~~ — MAX7219 over hardware SPI and the ILI9341
+   (320×240 default, resolution adjustable) shipped. Follow-ups: ST7789
+   command variants, MADCTL rotation, byte-exact chunk alignment (known
+   one-chunk offset limitation, SPI-M5.md).
+3. Optional hack-grade slave models (SD card): RX injection via the
+   memory-backed W fields — gate behind a version check that re-runs the
+   runtime struct discovery (`m5_mem_probe.mjs` is the reference).
 
 ## Maintenance items
 

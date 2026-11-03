@@ -221,13 +221,40 @@ CPU 驱动(位绑定)的波形**可以**出现在 `onPinState` 里——但
   发送后的通道 RAM 里;模拟器不实现 `APB_MEM_WADDR`(恒 0),发送中途
   拼接不可行)。按比值解码;`source: auto` 优先 RMT 路由。包络组装与
   解码在 `peris/devices/nec-lib.js`。
-- `peris/devices/max7219.js` —— 位绑定 DIN/CLK/LOAD 总线上的 MAX7219
-  显示驱动(只写器件,无需输入路径)。移位引擎在 CLK 上升沿采样 DIN、
-  LOAD 上升沿锁存 16 位字;失准帧被丢弃并计入 `dropped`,绝不出花屏。
-  寄存器模型、Code B 字体与画图在 `peris/devices/max7219-lib.js`;菊花链
-  共享焊盘(`sharedBus`,`chain`/`pos` 取各片的字)。租约取调度器下限
-  (细批 20/警戒 60):按无延时背靠背 `gpio_set_level` 脉冲实测标定(边沿
-  相距约 20 条指令)——这是已知最紧的真实固件,带延时的位绑定余量更大。
+- `peris/devices/max7219.js` —— 双总线的 MAX7219 显示驱动(`bus` 配置):
+  **bitbang**(默认)监听固件驱动的 DIN/CLK/LOAD——移位引擎在 CLK 上升沿
+  采样 DIN、LOAD 上升沿锁存 16 位字;失准帧被丢弃并计入 `dropped`,
+  绝不出花屏;**hwspi**(0.12.0)直接从 SPI2 的 W0..W15 暂存窗口解码硬件
+  主机传输(M5:一次 `spi_device_transmit` = 一个 LOAD 帧;MS_DLEN 给出
+  长度;引擎还会让"完成擦除始终未现"的挂起帧超时补发——总线拆除场景)。
+  两种总线经同一处理函数喂同一寄存器模型与菊花链取字
+  (`max7219-lib.js`)。hwspi 不占用焊盘,接线自动发现
+  (`spi-lib.discoverSpiWiring`,FSPICLK/FSPIQ/FSPID/FSPICS0..5)。
+  位绑定租约保持调度器下限(细批 20/警戒 60):按无延时背靠背
+  `gpio_set_level` 脉冲实测标定(边沿相距约 20 条指令)——已知最紧的
+  真实固件,带延时的位绑定余量更大;hwspi 警戒批 60(M5 实测:装载→
+  触发窗口在批次 60 下 10/10 存活,批次 100 即漏)。
+
+## 硬件 SPI 设备(0.12.0,M5)
+
+模拟 GP-SPI2 上的寄存器级监听者——GPIO matrix 使 SCLK/MOSI 在
+`gpio_state()` 里不可见(M0),因此这类设备改读外设寄存器(实测模型见
+`docs/SPI-M5.zh-cn.md`)。共享逻辑在 `peris/devices/spi-lib.js`(接线
+发现、W 窗口引擎、GDMA 描述符遍历)。
+
+- `peris/devices/ili9341.js` —— ILI9341 SPI 显示屏(esp_lcd / Arduino
+  命令流):`passive` 监听者(不占焊盘)。D/C 焊盘(`dcPin`,esp_lcd 用
+  软件翻转的普通 CPU GPIO)为事务分类——命令字节与数据——并划界;可选
+  `csPin` 提供精确事务边界。小流量走 W 窗口(无 DMA 驱动);DMA 总线上
+  一切绕过 W,故每个事务的字节从 GDMA 描述符链取得(飞行中读取 + 缓存
+  首描述符地址补间隙——hal 在事务间清除 outlink 并复用描述符内存,
+  P6 实测),按窗口组装并做残留/哨兵甄别;大块 RAMWR 突发将捕获的块段
+  按客户内存地址排序拼接,另有帧缓冲快照兜底。模型(`ili9341-lib.js`)
+  实现 CASET/RASET(4 字节与 2 字节形式)、RAMWR RGB565/RGB666 流(光标
+  回卷与帧计数)、COLMOD(COLMOD 丢失时按 RGB565 解码——esp_lcd 惯例)、
+  MADCTL、睡眠/显示标志;SWRESET 保留 GRAM。分辨率可配置(每轴 1..480,
+  默认 320×240)。已知限制:当某个块的描述符装载在单个批次内完成时,
+  像素值可能带一个块的偏移(SPI-M5 文档 §限制)。
 
 ## 示例
 

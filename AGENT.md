@@ -20,7 +20,8 @@ npm run sync               # publish into vendor/esp-emu-browser/www (build firs
 
 Architecture & data flow: `docs/ARCHITECTURE.md`; peripheral development:
 `docs/DEVICE-API.md`; esp-emulator wasm capability limits: `docs/EMU-API.md`
-and `docs/FEASIBILITY.md` (M0 measurements).
+and `docs/FEASIBILITY.md` (M0 measurements); hardware SPI development
+(TX capture + RX injection): `docs/SPI-M5.md`.
 
 ## 1. Environment pitfalls (this machine)
 
@@ -57,14 +58,30 @@ and `docs/FEASIBILITY.md` (M0 measurements).
 - **No callbacks**: everything is `run_batch()` polling between batches; UART
   output is the return string of `run_batch`.
 - **LEDC/RMT waveforms never appear in `gpio_state()`** (they go through the
-  GPIO matrix); only CPU-direct GPIO writes are visible.
+  GPIO matrix); only CPU-direct GPIO writes are visible. Same for hardware
+  SPI pads (M5) — matrix-routed signals are pad-invisible, always.
   PWM → read the LEDC `DUTY_R` (value = duty×16, bits[18:4]; full-scale via
-  `conf0.TIMER_SEL` → timer `DUTY_RES` bits[3:0]; `conf0` bit2 = sig_out_en),
-  wiring → scan `GPIO_FUNCn_OUT_SEL_CFG` low 9 bits (LEDC ch0–5 = 45–50,
-  0x100 = plain GPIO), WS2812 → read the RMT channel RAM (left over after
+  `conf0.TIMER_SEL` → timer `DUTY_RES` bits[3:0]; conf0 bit2 = sig_out_en),
+  wiring → scan `GPIO_FUNCn_OUT_SEL_CFG` low bits (LEDC ch0–5 = 45–50;
+  **C3: the field is 8 bits and plain GPIO reads 0x80**, S3-class: 9 bits /
+  0x100), WS2812 → read the RMT channel RAM (left over after
   transmission). One implementation of all of this: `peris/devices/ledc-lib.js`
   — reuse, never fork. Address tables: `src/core/mmio/`; sources &
   verification: FEASIBILITY.md.
+- **Hardware SPI is modelled and usable (M5 — the old "impossible" verdict
+  is overturned)**: transfers complete (polling/irq/DMA), the register
+  block at 0x60024000 is readable via `read_memory()`, wiring is
+  discoverable (FSPICLK=63/FSPIQ=64/FSPID=65/FSPICS0..5=68..73). TX:
+  DMA payloads sit in guest RAM (coarse-readable); no-DMA TX only lives in
+  W0..W15 between the driver's copy and completion — 10-instruction micro
+  batches catch it 9/9, 300-instr batches never do (`USR=1` resolves
+  inside the guest's register read). RX: the model returns constant 0xff
+  and ignores `gpio_set_input` (no pad sampling); injection works by
+  patching the memory-backed W fields in wasm linear memory during the
+  completion→consumption window (instance captured by monkey-patching
+  `WebAssembly.Instance` around `initSync()`; struct found by value scan,
+  no hardcoded offsets). Probes: `tests/m5_probe.mjs`, `m5_mem_probe.mjs`,
+  `m5_wasm_static.mjs`; firmware P5 phase; details: FEASIBILITY.md M5.
 - **RMT channel RAM (WS2812, M3-measured)**: the copy encoder writes **one
   RMT word per WS2812 bit**; words wrap every 48; after a transmission the
   RAM holds the reset symbol, one all-zero terminator word and **only the
@@ -197,13 +214,18 @@ and `docs/FEASIBILITY.md` (M0 measurements).
   S7/S8 LEDC register-level devices driven by the `###P2` markers, S9 ws2812
   by `###P3`, S10/S11 the M4 I2C+IR devices by `###P4`, S13 the logic
   analyzer armed on the P4 soft-I2C bus (SCL/SDA legally shared with the
-  i2c slaves); S12 is
+  i2c slaves), S14/S15 the M5 hardware-SPI devices reconfigured in and run
+  to the NEXT round's `###P6 end` — the S13 frozen-check loop already
+  carried the round through P5/P6 and latched the flag, so S14 resets it
+  (a window lesson: unconditional settle loops consume later phases). Unit
+  layer for the same devices: `tests/unit/spi.test.mjs`. S12 is
   **machine-local**: it boots the gun 0.1.0 release — a real-world
   ESP32-S3 firmware with a delay-free bit-banged MAX7219 — in a second
   emulator instance and skips with a notice when
   `D:/d3/_git/gun_flag_monster/gun/release/0.1.0/gun-0.1.0-merged.bin`
   is absent; the gun project is read-only reference material, never modify
-  it, and its later releases use hardware SPI (invisible, M0)). **Timing lessons**:
+  it, and its later releases use hardware SPI — M5 made that visible at
+  the register level, a future S12 variant could decode it). **Timing lessons**:
   - **drive by UART markers, never batch counts** — with M4 leases standing
     a sleep batch fast-forwards ~680k cycles, and a batch-count window
     overshoots whole rounds (the firmware prints `###P1/P1b..P4 start/end` and
@@ -218,6 +240,11 @@ and `docs/FEASIBILITY.md` (M0 measurements).
 - **M0 probe** `tests/m0_probe.mjs`: after an upstream wasm upgrade this is
   **the first thing to run**; if any of the six conclusions (Q1a..Q3b)
   changed, update FEASIBILITY.md/EMU-API.md before touching other code.
+  Then run the M5 pair (`tests/m5_probe.mjs` bus-level,
+  `tests/m5_mem_probe.mjs` memory access + RX injection — expects the P5
+  firmware phase, three rounds) and `tests/m5_wasm_static.mjs` (export/
+  string inventory — checks the wasm surface is still the documented 34
+  exports and the periph module strings are unchanged).
 - **GUI smoke** (manual; checklist in ARCHITECTURE.md §5): the IAB automation
   used in past sessions degrades easily (click actionability timeouts,
   screenshot surface failures, xterm DOM rendering only viewport rows and

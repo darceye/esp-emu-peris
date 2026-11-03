@@ -28,6 +28,29 @@ export interface ChipMmio {
     };
     /** GPIO-matrix signal ids observed on this chip (M0 + IDF gpio_sig_map.h). */
     signals: Record<string, number>;
+    /**
+     * Hardware SPI2 (GP-SPI) register-level access — M5: the peripheral is
+     * modelled, TX is observable (W window no-DMA / GDMA chain for DMA),
+     * RX is synthetic 0xff. See docs/SPI-M5.md. Optional: chips without a
+     * table make register-level SPI devices idle.
+     */
+    spi?: {
+        base: number;
+        cmd: number;
+        /** W0..W15 staging window (64 bytes; byte i of a word at bits [8i+7:8i]). */
+        wBase: number;
+        wWords: number;
+        /** MS_DLEN: bits[17:0] = transfer length in bits − 1 (M5 measured). */
+        msDlen: number;
+        /** GDMA outlink registers per TX channel; value = low `addrBits` of
+         * the first descriptor, absolute address = dramBase | value. The
+         * pointer stays readable after completion (M5: no race needed). */
+        gdma: {
+            outLink: number[];
+            addrBits: number;
+            dramBase: number;
+        };
+    };
 }
 
 export const esp32c3: ChipMmio = {
@@ -81,5 +104,34 @@ export const esp32c3: ChipMmio = {
         // (ch2/3 are RX-only, no output signal), verified vs gpio_sig_map.h
         rmtCh0: 0x33,
         rmtCh1: 0x34,
+        // GP-SPI2 (FSPI) matrix signals — M5 measured sclk/d/q routing live;
+        // full set from gpio_sig_map.h. C3 OUT_SEL field is 8 bits, plain
+        // GPIO = 0x80 (not 9-bit/0x100 as on S3-class chips).
+        spiClk: 63,
+        spiQ: 64,   // MISO (FSPIQ_OUT routes on the pad but oe stays off)
+        spiD: 65,   // MOSI
+        spiHd: 66,
+        spiWp: 67,
+        spiCs0: 68,
+        spiCs1: 69,
+        spiCs2: 70,
+        spiCs3: 71,
+        spiCs4: 72,
+        spiCs5: 73,
+    },
+    spi: {
+        base: 0x60024000,          // GPSPI2 (M5: register file readable, transfers complete)
+        cmd: 0x60024000,           // bit0 = USR (never host-visible — resolves on guest access)
+        wBase: 0x60024098,         // W0; +4*n up to W15
+        wWords: 16,                // 64-byte staging window
+        msDlen: 0x6002401c,        // bits[17:0] = transfer bits − 1
+        gdma: {
+            // GDMA_OUT_LINK_CHn_REG (0x6003F000 + 0xE0 + 0xC0*n); the addr
+            // field is the low 20 bits of the first lldesc (0x3FC00000-based
+            // DRAM). M5 measured: valid during AND after the transfer.
+            outLink: [0x6003f0e0, 0x6003f1a0, 0x6003f260],
+            addrBits: 20,
+            dramBase: 0x3fc00000,
+        },
     },
 };

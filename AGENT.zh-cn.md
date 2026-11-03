@@ -18,7 +18,8 @@ npm run sync               # 发布进 vendor/esp-emu-browser/www(先 build;--cl
 ```
 
 架构与数据流见 `docs/ARCHITECTURE.zh-cn.md`;外设开发见 `docs/DEVICE-API.zh-cn.md`;
-esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.zh-cn.md`(M0 实测)。
+esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.zh-cn.md`(M0 实测);
+硬件 SPI 开发(TX 捕获 + RX 注入)见 `docs/SPI-M5.zh-cn.md`。
 
 ## 1. 环境坑(本机)
 
@@ -48,11 +49,24 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
 
 - **没有回调**,一切靠 `run_batch()` 批间轮询;UART 输出是 `run_batch` 的返回字符串。
 - **LEDC/RMT 波形不出现在 `gpio_state()`**(它们走 GPIO matrix);只有 CPU 直写 GPIO 可见。
+  硬件 SPI 的 pad 同理(M5)——经 matrix 的信号在 pad 级永远不可见。
   PWM→读 LEDC `DUTY_R`(值=duty×16,bits[18:4];满量程经 `conf0.TIMER_SEL`→timer
   `DUTY_RES` bits[3:0];`conf0` bit2=sig_out_en),接线→扫 `GPIO_FUNCn_OUT_SEL_CFG`
-  低 9 位(LEDC ch0–5=45–50,0x100=普通 GPIO),WS2812→读 RMT 通道 RAM(发送后留存)。
+  (LEDC ch0–5=45–50;**C3 字段为 8 位、普通 GPIO 读 0x80**,S3 类为 9 位/0x100),
+  WS2812→读 RMT 通道 RAM(发送后留存)。
   以上全部只有一份实现:`peris/devices/ledc-lib.js`——复用,禁止另写。
   地址表:`src/core/mmio/`,来源与验证:FEASIBILITY.zh-cn.md。
+- **硬件 SPI 已被模拟且可用(M5——旧"不可行"结论被推翻)**:传输全部完成
+  (轮询/中断/DMA),0x60024000 寄存器块经 `read_memory()` 可读,接线可发现
+  (FSPICLK=63/FSPIQ=64/FSPID=65/FSPICS0..5=68..73)。TX:DMA 载荷躺在客户
+  RAM 里(粗粒度可读);no-DMA 的 TX 只在驱动拷贝到完成之间存在于
+  W0..W15——10 指令微批次 9/9 截获,300 指令批次永远截不到(`USR=1` 在
+  客户读寄存器时就地结算)。RX:模型恒返 0xff 且无视 `gpio_set_input`
+  (不采样焊盘);但经 wasm 线性内存补丁 W 字段可在完成→消费窗口注入
+  (实例捕获=在 `initSync()` 前后猴子补丁 `WebAssembly.Instance`;结构体
+  按值扫描发现,无硬编码偏移)。探针:`tests/m5_probe.mjs`、
+  `m5_mem_probe.mjs`、`m5_wasm_static.mjs`;固件 P5 阶段;详见
+  FEASIBILITY.zh-cn.md M5。
 - **RMT 通道 RAM(WS2812,M3 实测)**:copy encoder **每个 WS2812 位写一个
   RMT 字**;字写到 48 后回绕;发送结束后 RAM 里只有复位符号、一个全零终止字
   和**最后 46 位**——解码帧尾,以复位符号(低 ≥30µs)重同步并前置补零对齐
@@ -155,11 +169,16 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
   按键电平被客户机读回并镜像到 LED,S7/S8 LEDC 寄存器级设备按 `###P2`
   标记驱动,S9 ws2812 按 `###P3`,S10/S11 为 M4 的 I2C+IR 设备按
   `###P4`,S13 逻辑分析仪在 P4 软 I2C 总线上武装捕获(SCL/SDA 与 i2c
-  从机合法共享);S12 为**本机可选用例**:在第二个模拟器实例里启动 gun 0.1.0
-  发布件——真实 ESP32-S3 固件,无延时位绑定驱动 MAX7219——
+  从机合法共享),S14/S15 为 M5 硬件 SPI 设备——重新配置后跑到下一轮的
+  `###P6 end`(S13 的 frozen 检查循环已把本轮带过 P5/P6 并锁存了标志,
+  S14 需重置——窗口教训:无条件 settle 循环会吃掉后续阶段)。同一批
+  设备的单元层:`tests/unit/spi.test.mjs`。S12 为**本机可选用例**:在
+  第二个模拟器实例里启动 gun 0.1.0 发布件——真实 ESP32-S3 固件,无延时
+  位绑定驱动 MAX7219——
   `D:/d3/_git/gun_flag_monster/gun/release/0.1.0/gun-0.1.0-merged.bin`
   缺失时打印提示跳过;gun 项目是只读参考,绝不可改动,且其后续版本改用
-  硬件 SPI(按 M0 不可见))。**时序经验**:
+  硬件 SPI——M5 之后这在寄存器级可见,未来的 S12 变体可以解码它)。
+  **时序经验**:
   - **按 UART 标记驱动,永不按批数**——M4 租约常设时一个睡眠批次快进
     ~68 万周期,按批数的窗口会跑过整轮(固件打印 `###P1/P1b..P4 start/end`
     与 `###ROUND`,见 `tests/firmware/peris_probe/main/main.c`);
@@ -170,6 +189,10 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
   - 测试里采样状态用强制 `rt.flushStates(true)`——等墙钟节流会让断言抖动。
 - **M0 探针** `tests/m0_probe.mjs`:上游 wasm 升级后**第一个跑**的东西,六项
   结论(Q1a..Q3b)若有变化先改 FEASIBILITY/EMU-API 文档再动其它代码。
+  然后跑 M5 两个探针(`tests/m5_probe.mjs` 总线级、`tests/m5_mem_probe.mjs`
+  内存访问+RX 注入——需要固件 P5 阶段,跑三轮)和 `tests/m5_wasm_static.mjs`
+  (导出/字符串清单——校验 wasm 表面仍是文档记载的 34 个导出、periph 模块
+  字符串未变)。
 - **GUI 冒测**(手动,清单在 ARCHITECTURE §5):本会话所用 IAB 自动化易劣化
   (点击 actionability 超时、截图 surface 失败、xterm DOM 只渲染视口行且 rAF
   停滞时整块冻结)——**DOM 只读断言最可靠**;固件注入可用页面自身 drop 处理器

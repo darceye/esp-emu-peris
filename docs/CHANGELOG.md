@@ -8,6 +8,52 @@ CHANGELOG.zh-cn.md).
 Rules: major = breaking protocol/architecture change; minor = new capability;
 patch = fixes and small changes.
 
+## peris 0.12.0
+
+- **Hardware-SPI devices** (M5, the "impossible" milestone revisited — see
+  docs/SPI-M5.md): GP-SPI2 is modelled by the emulator and its TX stream is
+  observable at the register level, so two device capabilities ride it.
+- **MAX7219 on hardware SPI** (`max7219.js` v1.1.0): the new `bus: 'hwspi'`
+  config decodes the driver's transfers straight from the SPI2 W0..W15
+  staging window (one `spi_device_transmit` = one LOAD frame — the same
+  register model and daisy-chain semantics as the bit-bang bus, fed through
+  the same handler). Claims no pads and discovers the wiring itself
+  (FSPICLK=63 / FSPID=65 / FSPICS0..5=68..73 in the GPIO-matrix scan);
+  `bus: 'bitbang'` stays the default and behaves exactly as before.
+- **ILI9341 SPI display** (`ili9341.js` v1.0.0, new): renders the esp_lcd /
+  Arduino-style ILI9341 command stream (CASET/RASET window, RAMWR RGB565 /
+  RGB666 pixels, COLMOD, MADCTL, sleep/display flags) as a canvas.
+  Resolution configurable (1..480 per axis, default 320×240). Commands and
+  small params come from the W window (DMA-less drivers) or the GDMA
+  descriptor chain (esp_lcd, where DMA bypasses W — the D/C pad, a plain
+  CPU GPIO, classifies and brackets every transaction); large pixel bursts
+  are assembled from caught descriptor segments ordered by their guest
+  buffer addresses, with a frame-buffer snapshot fallback. Known
+  limitation, documented: pixel values can carry a one-chunk offset when a
+  chunk's descriptor load completes inside a single batch (SPI-M5.md).
+- **Framework**: `peris/devices/spi-lib.js` (shared: FSPI wiring discovery,
+  the W-window engine with MS_DLEN lengths + teardown timeout, the GDMA
+  chain walk with cached-head gap recovery); the C3 MMIO table gains a
+  `spi` section (registers + GDMA outlinks). The ili9341 is a `passive`
+  listener (claims no pads, like the logic analyzer).
+- Firmware: P6 phase (MAX7219 register writes over hardware SPI without
+  DMA + an ILI9341 command stream with a chunked 320×240 RGB565 burst over
+  DMA, D/C=GPIO15). Tests: `tests/unit/spi.test.mjs` (18 cases: discovery,
+  window engine, GDMA walk, ILI9341 model, the hwspi plugin end-to-end) +
+  smoke S14/S15.
+
+| device | version |
+|---|---|
+| led | 1.1.1 |
+| button / touch-button / toggle-switch | 1.1.0 |
+| pwm-led / rgb-led | 1.0.0 |
+| ws2812 | 1.0.0 |
+| bitbang-i2c-slave | 1.0.0 |
+| ir-nec | 1.0.0 |
+| max7219 | 1.1.0 |
+| ili9341 | 1.0.0 |
+| logic-analyzer | 1.1.0 |
+
 ## peris 0.11.0
 
 - **Logic analyzer probes anything** (`logic-analyzer.js` v1.1.0): the new

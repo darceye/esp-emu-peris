@@ -99,11 +99,16 @@ Reproduce: `node tests/m0_probe.mjs` (the probe) + `tests/firmware/peris_probe`
 
 ## Ruled out / still limited by upstream
 
-- Hardware I2C/SPI external device models, a real touch peripheral, ADC,
-  I2S, SPI/RGB565 displays, SD cards, UART1: no wasm API — waiting on
-  esp-emulator upstream (see docs/ROADMAP.md).
-- Pin-level PWM/RMT waveform observation: structurally unviable
-  (Q2a/Q3a), independent of sample rate.
+- ~~Hardware SPI~~ **revised in M5**: GP-SPI **is** modelled upstream and is
+  observable/injectable at the register level — see the M5 section below.
+- Hardware I2C controller: upstream models it (with a built-in 24Cxx EEPROM
+  slave at 0x50 on every chip, plus CLI `--i2c-dev` register-file devices —
+  upstream README; wasm strings show `src/periph/i2c.rs`). Not live-tested
+  here yet; expect the same register-level story as SPI.
+- A real touch peripheral, ADC, I2S, SD-card device models, UART1: no wasm
+  API — waiting on esp-emulator upstream (see docs/ROADMAP.md).
+- Pin-level PWM/RMT/SPI waveform observation: structurally unviable
+  (Q2a/Q3a, M5d), independent of sample rate.
 
 ## M4 measurements (bit-bang protocol devices + IR)
 
@@ -147,3 +152,92 @@ scratch probes (conclusions verified by the shipped tests):
    C↔JS compensation parity check caught `dig_P1` needing **uint16**
    (36477 wraps negative in int16 — T/H matched, only P diverged, which
    is what localised it).
+
+## M5 measurements (hardware SPI — the "impossible" M5 revisited)
+
+Date: 2026-11-02 · wasm v0.51.0 · firmware P5 phase (hardware SPI2 master,
+FSPICLK=11/MOSI=12/MISO=13/CS=14; polling, interrupt-driven and DMA
+transfers). Probes: `tests/m5_probe.mjs` (bus-level observability),
+`tests/m5_mem_probe.mjs` (linear-memory access + RX injection),
+`tests/m5_wasm_static.mjs` (export/string inventory). **The old M5 verdict
+("hardware SPI cannot be tapped — the peripheral is not emulated") is
+overturned.** How-to for device authors: [SPI-M5.md](SPI-M5.md).
+
+1. **GP-SPI2 is fully modelled** (upstream README lists GP-SPI among the
+   modelled peripherals and it measures true): the IDF master driver
+   initialises, **polling, interrupt-driven and DMA transfers all complete
+   (e=0)**, the trans_done interrupt is delivered, and every register the
+   probe reads through `read_memory()` matches the firmware's own register
+   dump exactly (USER=0x18000041, MISC=0x3e, ADDR=0, W-window …).
+2. **C3 SPI2 register map (usable as an MMIO table)**: base 0x60024000 —
+   CMD +0x00, ADDR +0x04, CTRL +0x8, CLOCK +0xC, USER +0x10, USER1 +0x14,
+   USER2 +0x18, MS_DLEN +0x1C, MISC +0x20, DMA_CONF +0x30, W0..W15
+   +0x98..+0xD4 (64-byte buffer). Wiring is auto-discoverable exactly like
+   LEDC/RMT: `FUNC11_OUT_SEL=63` (FSPICLK), `FUNC12=65` (FSPID),
+   `FUNC13=64` (FSPIQ_OUT routed, oe off), CS pin reads the plain-GPIO
+   marker, and the input side `GPIO_FUNC64_IN_SEL_CFG` (FSPIQ_IN) reads
+   `in_sel=13`. **C3 correction: `GPIO_FUNCn_OUT_SEL` is an 8-bit field
+   whose plain-GPIO value is 0x80 (default) — not 0x100/9-bit as noted
+   for S3-class chips; LEDC signal ids 45–50 and SPI ids 63–73 are all
+   below 0x80, so existing scans are unaffected.**
+3. **TX (what the firmware sends) is readable, by two paths**:
+   - **DMA transfers** (the norm for displays/SD): the payload sits in
+     plain guest RAM at the driver's buffer; a 256-byte pattern was
+     readable 256/256 through `read_memory()` after "dma done" (coarse
+     batches, no timing tricks). W regs are bypassed (they keep stale
+     no-DMA data). A sniffer walks the buffer via the UART-logged /
+     descriptor-followed address.
+   - **No-DMA transfers** (≤64 bytes): the hal loads W0..W15, fires CMD,
+     and the model fills W with RX results at completion — so W holds TX
+     only between the driver's copy and the transfer's end. 300-instr
+     batches never catch `CMD.USR=1` (completion resolves inside the
+     guest's own status read — polling *and* interrupt paths alike), but
+     **10-instruction micro batches straddle the load→fire window and
+     caught the TX payload 9/9** (each word packs 4 bytes, tx[i] in bits
+     [8i+7:8i]; e.g. tx {A0,FF,00,5A} → w0=0x5a00ffa0). This is the M4
+     scheduler's floor size — an armed lease at 20–10 works; the window
+     does not survive 300.
+4. **MISO is synthetic and pad-blind**: the master always receives 0xff —
+   holding the MISO pad low (via `gpio_set_input`) for an entire transfer
+   still returns 0xff (unlike the GPIO peripheral, the SPI model does not
+   sample the pad input). No wasm export writes memory. **Therefore no
+   pad-level slave is possible** — same verdict as M0's Q2a/Q3a class.
+5. **RX injection via wasm linear memory works** (the escape hatch): the
+   wasm `memory` export is public and the **peripheral register file is
+   memory-backed** — the GPSPI2 model struct was located by scanning for
+   the distinctive USER value (single hit; struct base 0x97d2e8, register
+   layout mirrored: W0 at +0x98) and verified host-writable (DataView
+   write → `read_memory()` returns it). The instance is captured by
+   monkey-patching `WebAssembly.Instance` around `initSync()` (the glue
+   keeps `wasm` module-private). Completion→consumption is separated by
+   guest instructions, so with **single-instruction batches** a host write
+   of the W fields in that gap reaches the driver's read: the firmware
+   printed `###P5 irq rx e=0 b=d1 c0 ff ee` for host bytes d1 c0 ff ee
+   (reproducible; a control round without the write prints ff ff ff ff).
+   The consumption diff over the struct is **zero words** — the read path
+   returns the field directly, injection is a pure race against the single
+   model write of 0xff, won by re-writing on every boundary once the TX
+   payload is seen. Caveats: offsets are per wasm build (pin the version,
+   rediscover by the value scan — the probe does this at runtime, no
+   hardcoded addresses needed) and this is per-transfer instruction-window
+   work, not a free API.
+6. **Timing**: polling and interrupt transfers complete with ~0 extra
+   guest cycles beyond the markers (a 60 ms sleep window measures
+   9.604 M cycles ≈ sleep + overhead; no 32 µs transfer delay is forced
+   at 1 MHz) — the model resolves transfers on the guest's register
+   access, which is why `USR=1` is never observable from the host.
+
+### M5 device implications
+
+- **TX-only SPI devices are straightforward**: sniffer/protocol-analyzer
+  and write-only displays (MAX7219-class over hardware SPI, ILI/ST7789
+  command streams) via the DMA-RAM path (coarse) + no-DMA micro-batch
+  window for small control transfers, wiring auto-discovered from the
+  matrix registers.
+- **Full slave models (SD card etc.) are possible but hack-grade**: TX
+  sniffing as above plus RX injection through the linear-memory W fields
+  (per-version offsets, instruction-window races). Document as
+  fragile-but-proven; revisit if upstream ever exposes a device bridge.
+- **Hardware I2C** is also modelled upstream (built-in EEPROM at 0x50,
+  `--i2c-dev` register files on the CLI; browser build has neither flag
+  nor export — but the register level should mirror SPI; untested).

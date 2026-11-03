@@ -1,37 +1,50 @@
 /*
- * MAX7219 display driver — watches a firmware bit-banged 3-wire bus
- * (DIN / CLK / LOAD) and renders the latched 8-digit display as 8×8 matrix
- * dots or 7-segment digits.
+ * MAX7219 display driver — renders the latched 8-digit display as 8×8
+ * matrix dots or 7-segment digits, from either of two firmwareside buses
+ * (config `bus`):
  *
- * Why bit-bang only: signals routed through a hardware SPI peripheral never
- * appear in gpio_state() (M0 — the GPIO-matrix path is invisible), so the
- * device requires firmware that drives DIN/CLK/LOAD with CPU GPIO writes
- * (any soft-SPI code, delay-paced or back-to-back). CPU-driven edges are
- * only observable while a fine sampling lease is held (M4 scheduler): the
- * device arms a standing watch and escalates on the first bus edge, exactly
- * like the bit-bang I2C slave.
+ *   bitbang — firmware drives DIN/CLK/LOAD with CPU GPIO writes (any
+ *     soft-SPI code, delay-paced or back-to-back). CPU-driven edges are
+ *     only observable while a fine sampling lease is held (M4 scheduler):
+ *     the device arms a standing watch and escalates on the first bus
+ *     edge, exactly like the bit-bang I2C slave.
  *
- * Lease sizing (measured against the reference firmware, gun 0.1.0: pulses
- * with NO delays — back-to-back gpio_set_level calls): one CLK edge costs
- * ~20 instructions, the shortest CLK→DIN / CLK→CLK gap is ~20-40, the LOAD
- * fall leads the first CLK rise by ~80, a whole 16-bit frame spans ~1820.
- * So the fine lease sits at the scheduler's floor (20) — every edge then
- * lands in its own batch and DIN is never ambiguous against a CLK rise —
- * and the arm batch (60) always separates the LOAD fall from the first
- * CLK rise. Delay-paced bit-bang (esp_rom_delay_us(2), gun 0.1.5-class,
- * gaps ≥160) is covered with even wider margins. Firmwares with pulses
- * below ~20 instructions lose edges; the engine drops misaligned frames
- * and counts them in `dropped` (visible in the caption) instead of showing
- * garbage — drivers that re-push their registers periodically self-heal.
+ *   hwspi — firmware talks to the part over the hardware SPI2 master
+ *     (M5: the peripheral is modelled and its TX is observable at the
+ *     register level). Each spi_device_transmit = one CS frame: the hal
+ *     loads W0..W15 and the model wipes them at completion, so a batch
+ *     watcher catches the payload (spi-lib.js SpiWindowEngine; measured
+ *     catch rate 10/10 at arm batch 60). One transfer's bytes are the
+ *     shifted-in 16-bit words — MSB first — which is exactly a LOAD-frame
+ *     of the bit-bang engine's contract, so both buses feed the same
+ *     register model through the same handler. Claims no pads in this
+ *     mode (a register-level listener, like the LEDC devices).
+ *
+ * Bit-bang lease sizing (measured against the reference firmware, gun
+ * 0.1.0: pulses with NO delays — back-to-back gpio_set_level calls): one
+ * CLK edge costs ~20 instructions, the shortest CLK→DIN / CLK→CLK gap is
+ * ~20-40, the LOAD fall leads the first CLK rise by ~80, a whole 16-bit
+ * frame spans ~1820. So the fine lease sits at the scheduler's floor (20)
+ * — every edge then lands in its own batch and DIN is never ambiguous
+ * against a CLK rise — and the arm batch (60) always separates the LOAD
+ * fall from the first CLK rise. Delay-paced bit-bang (esp_rom_delay_us(2),
+ * gun 0.1.5-class, gaps ≥160) is covered with even wider margins.
+ * Firmwares with pulses below ~20 instructions lose edges; the engine
+ * drops misaligned frames and counts them in `dropped` (visible in the
+ * caption) instead of showing garbage — drivers that re-push their
+ * registers periodically self-heal.
  *
  * Daisy chains: N parts share DIN/CLK/LOAD (`sharedBus`); each instance
  * latches the word that ended in its chain position (chain length + position
- * in the config). Single devices (chain 1) simply take the last word.
+ * in the config). Single devices (chain 1) simply take the last word. The
+ * same chain semantics apply on hwspi: one hardware transfer of N×16 bits
+ * is one frame of N daisy words.
  */
 import {
     Max7219Model, Max7219Wire, pickChainWord, displayFromSnapshot,
     drawDisplay, drawSeg7, displayLevel, displayGeometry, MX_COLOR,
 } from './max7219-lib.js';
+import { SpiWindowEngine, discoverSpiWiring } from './spi-lib.js';
 import { makeCanvas } from './ws2812-lib.js';
 
 /** Standing watch batch (instructions) while the bus is idle — below the
@@ -44,11 +57,19 @@ export const FINE_BATCH = 20;
 /** Fine lease budget (cycles), renewed on every edge: bridges the slowest
  * plausible mid-frame pause (8-word chain frames run ~600k cycles). */
 export const FINE_HOLD_CYCLES = 2000000;
+/** hwspi: standing arm batch — M5 measured the W load→fire window survives
+ * batch 60 (10/10) but not 100 (1/9); 60 matches the bit-bang arm. */
+export const HW_ARM_BATCH = 60;
+/** hwspi: wiring rescan cadence (batches) — caption only, same cadence as
+ * the LEDC auto-binding rescan. */
+export const HW_RESCAN_BATCHES = 24;
 
 const pinNum = (v, dflt) => {
     const n = Number(v);
     return Number.isInteger(n) && n >= 0 ? n : dflt;
 };
+
+const busFrom = (v) => (v === 'hwspi' ? 'hwspi' : 'bitbang');
 
 const chainFrom = (v) => {
     const n = Number(v);
@@ -62,19 +83,25 @@ const posFrom = (v, chain) => {
 
 export class Device {
     static typeId = 'max7219';
-    static version = '1.0.0';
+    static version = '1.1.0';
     static title = 'MAX7219 Display';
     static category = 'display';
-    static description = '8-digit LED driver on a firmware bit-banged DIN/CLK/LOAD bus — 8×8 matrix or 7-segment view, daisy-chainable.';
+    static description = '8-digit LED driver on a firmware bit-banged DIN/CLK/LOAD bus or the hardware SPI2 master — 8×8 matrix or 7-segment view, daisy-chainable.';
     static defaultConfig = {
-        name: 'MAX7219', din: 21, clk: 13, load: 14, chain: 1, pos: 0, mode: 'auto',
+        name: 'MAX7219', bus: 'bitbang', din: 21, clk: 13, load: 14, chain: 1, pos: 0, mode: 'auto',
     };
-    /* DIN/CLK/LOAD are a bus: daisy-chained parts legally share all three. */
+    /* DIN/CLK/LOAD are a bus: daisy-chained parts legally share all three.
+     * (hwspi mode claims nothing — pins() returns [].) */
     static sharedBus = true;
     static pins(cfg) {
+        if (busFrom(cfg.bus) === 'hwspi') return [];
         return [pinNum(cfg.din, 21), pinNum(cfg.clk, 13), pinNum(cfg.load, 14)];
     }
     static configSchema = [
+        { key: 'bus', label: 'Bus', type: 'select', options: [
+            { value: 'bitbang', label: 'Bit-banged (DIN/CLK/LOAD GPIOs)' },
+            { value: 'hwspi', label: 'Hardware SPI2 (register level, M5)' },
+        ] },
         { key: 'din', label: 'DIN GPIO', type: 'pin' },
         { key: 'clk', label: 'CLK GPIO', type: 'pin' },
         { key: 'load', label: 'LOAD/CS GPIO', type: 'pin' },
@@ -91,6 +118,7 @@ export class Device {
     constructor(ctx, cfg) {
         this.ctx = ctx;
         this.cfg = cfg;
+        this.bus = busFrom(cfg.bus);
         this.din = pinNum(cfg.din, 21);
         this.clk = pinNum(cfg.clk, 13);
         this.load = pinNum(cfg.load, 14);
@@ -99,7 +127,16 @@ export class Device {
         this.model = new Max7219Model();
         this.levels = { clk: null, din: null, load: null };
         this.frames = 0;   // aligned LOAD frames seen (any chain length)
-        this.dropped = 0;  // misaligned frames — edges lost to sampling
+        this.dropped = 0;  // misaligned frames — edges/transfers lost to sampling
+        if (this.bus === 'hwspi') {
+            /* register-level listener: no pad claims, no pin subscription —
+             * the W window is watched every armed batch (M5, spi-lib). */
+            this.window = new SpiWindowEngine(ctx, (bytes) => this._onHwTransfer(bytes));
+            this.wiring = null;
+            this.batchCount = 0;
+            ctx.armSampling(HW_ARM_BATCH);
+            return;
+        }
         this.wire = new Max7219Wire((words, bits) => this._onFrame(words, bits));
         ctx.subscribe([this.din, this.clk, this.load]);
         ctx.armSampling(ARM_BATCH);
@@ -108,15 +145,22 @@ export class Device {
     onEmuReady() {
         // fresh emulator: the chip powers up in shutdown, blank, scan 1 digit
         this.model.reset();
-        this.wire.reset();
-        this.levels = { clk: null, din: null, load: null };
         this.frames = 0;
         this.dropped = 0;
-        this.ctx.armSampling(ARM_BATCH);
+        if (this.bus === 'hwspi') {
+            this.window.reset();
+            this.wiring = null;
+            this.ctx.armSampling(HW_ARM_BATCH);
+        } else {
+            this.wire.reset();
+            this.levels = { clk: null, din: null, load: null };
+            this.ctx.armSampling(ARM_BATCH);
+        }
         this.ctx.markDirty();
     }
 
     onPinState(pin, s) {
+        if (this.bus === 'hwspi') return;
         const high = !!(s.out && s.oe);
         if (pin === this.din) this.levels.din = high;
         else if (pin === this.clk) this.levels.clk = high;
@@ -128,6 +172,17 @@ export class Device {
     }
 
     onBatch() {
+        if (this.bus === 'hwspi') {
+            this.window.sample();
+            if (++this.batchCount % HW_RESCAN_BATCHES === 0) {
+                const w = discoverSpiWiring(this.ctx);
+                if (JSON.stringify(w) !== JSON.stringify(this.wiring)) {
+                    this.wiring = w;   // caption only — the engine needs no wiring
+                    this.ctx.markDirty();
+                }
+            }
+            return;
+        }
         if (this.wire.busy) {
             // mid-frame: renew even without edges (slow bit-bang pauses)
             this.ctx.fineSampling(FINE_BATCH, FINE_HOLD_CYCLES);
@@ -136,8 +191,8 @@ export class Device {
 
     getState() {
         const m = this.model;
-        return {
-            din: this.din, clk: this.clk, load: this.load,
+        const st = {
+            bus: this.bus,
             chain: this.chain, pos: this.pos,
             digits: m.digits.slice(),
             decodeMode: m.decodeMode,
@@ -149,6 +204,13 @@ export class Device {
             dropped: this.dropped,
             writes: m.writes,
         };
+        if (this.bus === 'hwspi') {
+            st.transfers = this.window.transfers;
+            st.wiring = this.wiring;
+        } else {
+            st.din = this.din; st.clk = this.clk; st.load = this.load;
+        }
+        return st;
     }
 
     destroy() {
@@ -167,6 +229,22 @@ export class Device {
         if (word != null && this.model.write((word >> 8) & 0xff, word & 0xff)) {
             this.ctx.markDirty();
         }
+    }
+
+    /* hwspi: one SpiWindowEngine transfer = one CS frame — MSB-first bytes
+     * pair into the 16-bit words a LOAD-frame carries, then the exact same
+     * chain/latch path as bit-bang. */
+    _onHwTransfer(bytes) {
+        if (bytes.length === 0 || bytes.length % 2 !== 0 || bytes.length > 16 * 2) {
+            this.dropped++;
+            this.ctx.markDirty();
+            return;
+        }
+        const words = new Array(bytes.length / 2);
+        for (let i = 0; i < words.length; i++) {
+            words[i] = ((bytes[2 * i] << 8) | bytes[2 * i + 1]) & 0xffff;
+        }
+        this._onFrame(words);
     }
 }
 
@@ -222,7 +300,10 @@ export class View {
         const { segs, brightness } = displayFromSnapshot(state);
         if (this.g) drawDisplay(this.g, this.geo, this.mode, segs, brightness);
         if (this.iconG) this._applyIcon(this.mode, segs, brightness);
-        this.cap.textContent = `DIN GPIO${state.din} · CLK GPIO${state.clk} · LOAD GPIO${state.load}`
+        this.cap.textContent = (state.bus === 'hwspi'
+            ? `hardware SPI2${state.wiring && state.wiring.mosi != null
+                ? ` · MOSI GPIO${state.wiring.mosi} · SCLK GPIO${state.wiring.sclk}` : ''}`
+            : `DIN GPIO${state.din} · CLK GPIO${state.clk} · LOAD GPIO${state.load}`)
             + (state.chain > 1 ? ` · chain ${state.pos + 1}/${state.chain}` : '')
             + ` · ${state.frames} frames` + (state.dropped ? ` · ${state.dropped} dropped` : '')
             + (state.shutdown ? ' · shutdown' : '')

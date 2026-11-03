@@ -181,17 +181,52 @@ level- or ratio-based, never absolute-µs. The M4 plugins follow both rules:
   leaves `APB_MEM_WADDR` at 0 so mid-TX stitching is impossible). Ratio-
   based decode; `source: auto` prefers RMT routing. Envelope + decode in
   `peris/devices/nec-lib.js`.
-- `peris/devices/max7219.js` — MAX7219 display driver on a bit-banged
-  DIN/CLK/LOAD bus (write-only: no input path needed). The shift engine
-  samples DIN on CLK rising edges, latches 16-bit words on the LOAD rising
-  edge, and drops misaligned frames (counted in `dropped`) instead of
-  garbling the display. Register model + Code B font + painters in
-  `peris/devices/max7219-lib.js`; daisy chains share the pads
-  (`sharedBus`, `chain`/`pos` pick each part's word). Lease sizing is at
-  the scheduler floor (fine 20 / arm 60): measured against delay-free
-  back-to-back `gpio_set_level` pulses (edges ~20 instructions apart), the
-  tightest real firmware found — delay-paced bit-bang is covered with
-  much wider margins.
+- `peris/devices/max7219.js` — MAX7219 display driver on either bus
+  (`bus` config): **bitbang** (default) watches a firmware-driven
+  DIN/CLK/LOAD bus — the shift engine samples DIN on CLK rising edges,
+  latches 16-bit words on the LOAD rising edge, and drops misaligned
+  frames (counted in `dropped`) instead of garbling the display;
+  **hwspi** (0.12.0) decodes the hardware SPI2 master's transfers straight
+  from the W0..W15 staging window (M5: one `spi_device_transmit` = one
+  LOAD frame; MS_DLEN gives the length; the engine also ages out a
+  pending whose completion wipe never showed — a bus teardown). Both buses
+  feed the same register model + daisy-chain word picking through the same
+  handler (`max7219-lib.js`). hwspi claims no pads and discovers the
+  wiring itself (`spi-lib.discoverSpiWiring`, FSPICLK/FSPIQ/FSPID/
+  FSPICS0..5). Bit-bang lease sizing stays at the scheduler floor
+  (fine 20 / arm 60): measured against delay-free back-to-back
+  `gpio_set_level` pulses (edges ~20 instructions apart), the tightest
+  real firmware found — delay-paced bit-bang is covered with much wider
+  margins. hwspi arms at 60 (M5: the W load→fire window survives batch 60
+  10/10, batch 100 misses).
+
+## Hardware-SPI devices (0.12.0, M5)
+
+Register-level listeners on the emulated GP-SPI2 — the GPIO matrix makes
+SCLK/MOSI invisible in `gpio_state()` (M0), so these devices read the
+peripheral instead (`docs/SPI-M5.md` for the measured model). Shared
+logic in `peris/devices/spi-lib.js` (wiring discovery, the W-window
+engine, the GDMA descriptor walk).
+
+- `peris/devices/ili9341.js` — ILI9341 SPI display (esp_lcd / Arduino
+  command streams): `passive` listener (no pads claimed). The D/C pad
+  (`dcPin`, a plain CPU GPIO esp_lcd toggles in software) classifies
+  transactions — command byte vs data — and brackets them; the optional
+  `csPin` gives exact transaction boundaries. Small traffic comes from
+  the W window (DMA-less drivers); on a DMA bus everything bypasses W, so
+  each transaction's bytes are pulled from the GDMA descriptor chain
+  (in-flight reads + the cached first-descriptor address for gaps — the
+  hal clears the outlink between transactions and reuses descriptor
+  memory, P6-traced), assembled per window with residue/sentinel triage;
+  large RAMWR bursts assemble chunk segments ordered by their guest
+  buffer addresses, with a frame-buffer snapshot fallback. The model
+  (`ili9341-lib.js`) implements CASET/RASET (4- and 2-byte forms),
+  RAMWR RGB565/RGB666 streams with cursor wrap and frame counting, COLMOD
+  (a missing COLMOD decodes as RGB565 — the esp_lcd convention), MADCTL,
+  sleep/display flags; SWRESET keeps GRAM. Resolution configurable
+  (1..480 per axis, default 320×240). Known limitation: pixel values can
+  carry a one-chunk offset when a chunk's descriptor load completes inside
+  a single batch (SPI-M5.md §limits).
 
 ## Instrument devices (0.10.0)
 

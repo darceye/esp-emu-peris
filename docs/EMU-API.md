@@ -62,10 +62,26 @@ const emu = new WasmEmulator('esp32c3');   // 'esp32c3'|'esp32c5'|'esp32c6'|'esp
 |---|---|
 | LEDC duty registers | `0x60019000 + 0x14*n + {0,4,8,C,10}` (CONF0/HPOINT/DUTY/CONF1/DUTY_R); **reg = duty×16** (bits[18:4]); precisely readable via `read_memory` (M0 Q2b 53/53) |
 | RMT channel RAM | `0x60016400 + 0xC0*n`, 48 words/channel; symbols **remain after transmission** and can be decoded afterwards (M0 Q3b); word format `d0:15,l0:1,d1:15,l1:1` |
-| GPIO matrix routing | `GPIO_FUNCn_OUT_SEL = 0x60004000+0x554+4n`; LEDC0 signal = 0x2d, RMT ch0 = 0x33 → **wiring can be auto-discovered** |
-| IO_MUX (C3) | GPIO0..11 contiguous at `0x60009000+0x04+4n` |
+| GPIO matrix routing | `GPIO_FUNCn_OUT_SEL = 0x60004000+0x554+4n`; LEDC0 signal = 0x2d, RMT ch0 = 0x33 → **wiring can be auto-discovered**. C3: the OUT_SEL field is **8 bits, plain GPIO = 0x80** (not 9-bit/0x100 as on S3-class chips); input side `GPIO_FUNCn_IN_SEL_CFG = 0x60004000+0x154+4*sig` |
+| IO_MUX (C3) | GPIO0..21 contiguous at `0x60009000+0x04+4n` (verified against the IDF io_mux_reg.h offsets; e.g. GPIO11=+0x30, GPIO13=+0x38) |
 | Time fast-forward | during `vTaskDelay` `cycles()` jumps ahead without spending full CPU cycles → **pin waveforms inside CPU sleep windows cannot be captured** (independent of sample rate) |
 | Misc | GPIO_COUNT: C3=22 / C5=29 / C6=31 / H2=28 / P4=55 / S3=49 (no 22-25) / S31=32 |
+
+## 3b. Hardware SPI facts measured in M5 (ESP32-C3, wasm v0.51.0)
+
+GP-SPI2 **is modelled** — transfers complete (polling/interrupt/DMA), the
+trans_done interrupt is delivered, and `read_memory()` matches the
+firmware's own register view. Full details: FEASIBILITY.md "M5
+measurements".
+
+| fact | value / notes |
+|---|---|
+| SPI2 register block | base 0x60024000; CMD +0x00, ADDR +0x04, USER +0x10, MISC +0x20, W0..W15 +0x98..+0xD4 (64-byte buffer) |
+| SPI wiring signals | FSPICLK=63, FSPIQ=64, FSPID=65, FSPIHD=66, FSPIWP=67, FSPICS0..5=68..73 — discoverable in `FUNCn_OUT_SEL` / `FUNC(sig)_IN_SEL` |
+| TX observability | DMA transfers: payload readable from the guest-RAM buffer via `read_memory()` (coarse batches). No-DMA: TX lives in W0..W15 only between the driver's copy and completion — caught 9/9 with **10-instruction micro batches**; 300-instr batches miss it (completion resolves inside the guest's register read, `USR=1` is never host-visible) |
+| RX behaviour | master always receives **0xff**; `gpio_set_input` on the MISO pad is ignored (the model does not sample pads) |
+| RX injection (hack) | the wasm `memory` export is public and the register file is **memory-backed**: locate the model struct by scanning for the USER value (0x18000041), patch the W fields with a DataView during the completion→consumption instruction window (single-instruction batches) — proven, the guest received host-written bytes (m5_mem_probe) |
+| wasm export surface | exactly 34 exports (m5_wasm_static.mjs): the EMU API of §2 plus `memory` — **no write-memory/device-bridge export exists**; instance capture = monkey-patch `WebAssembly.Instance` around `initSync()` |
 
 ## 4. Official worker message protocol (www/worker.js; this project replicates and extends it)
 
@@ -84,5 +100,7 @@ const emu = new WasmEmulator('esp32c3');   // 'esp32c3'|'esp32c5'|'esp32c6'|'esp
 `--uart1-tcp` (external serial device), `--i2c-dev` (dumb-register I2C slave),
 `--rmt-loopback`, `--control-tcp` (flash write/erase), `--ble-hci`,
 `--thread-sim`, GDB stub, snapshot saving.
-These are exactly the capabilities the M5 roadmap waits on
-(see [ROADMAP.md](ROADMAP.md)).
+M5 revision: hardware SPI needs **none of these** — the peripheral is
+modelled and register/memory access (§3b) covers TX sniffing and even RX
+injection; the remaining genuinely-missing items are tracked in
+[ROADMAP.md](ROADMAP.md).

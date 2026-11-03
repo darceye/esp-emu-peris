@@ -1,0 +1,8 @@
+{
+    "perisVersion": 1,
+    "chip": "esp32c3",
+    "devices": [
+        { "id": "mx-hw",   "type": "max7219",             "name": "MAX7219 over hardware SPI2 (register level, no pads)", "bus": "hwspi", "chain": 1, "pos": 0, "mode": "auto" },
+        { "id": "lcd-1",   "type": "ili9341",             "name": "ILI9341 320x240 (esp_lcd command stream)", "bus": "hwspi", "dcPin": 15, "csPin": 14, "width": 320, "height": 240 }
+    ]
+}

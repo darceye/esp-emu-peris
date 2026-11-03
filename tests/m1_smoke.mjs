@@ -76,7 +76,7 @@ initSync(readFileSync(path.join(WWW, 'pkg/esp_emu_bg.wasm')));
 
 const { PerisRuntime } = await import(pathToFileURL(path.join(REPO, 'build/core/runtime.js')).href);
 const devices = {};
-for (const m of ['led', 'button', 'touch-button', 'toggle-switch', 'pwm-led', 'rgb-led', 'ws2812', 'bitbang-i2c-slave', 'ir-nec', 'max7219', 'logic-analyzer']) {
+for (const m of ['led', 'button', 'touch-button', 'toggle-switch', 'pwm-led', 'rgb-led', 'ws2812', 'bitbang-i2c-slave', 'ir-nec', 'max7219', 'ili9341', 'logic-analyzer']) {
     devices[m] = await import(pathToFileURL(path.join(REPO, `peris/devices/${m}.js`)).href);
 }
 const i2cLib = await import(pathToFileURL(path.join(REPO, 'peris/devices/i2c-lib.js')).href);
@@ -115,6 +115,8 @@ let inP1b = false;
 let inP2 = false;
 let inP3 = false;
 let inP4 = false;
+let p6MxEnd = false;
+let p6End = false;
 const p3Colours = []; // logged colours of the P3 bursts (walk + grad marker)
 const p1bSamples = []; // { sw, tch, n } lines printed inside P1b
 const p4Lines = [];   // raw ###P4 lines (parsed by the S10/S11 sections)
@@ -149,6 +151,8 @@ function trackMarkers() {
         else if (line === '###P4 start') inP4 = true;
         else if (line === '###P4 end') inP4 = false; // exact match BEFORE the prefix catch
         else if (line.startsWith('###P4 ')) p4Lines.push(line.slice(6));
+        else if (line === '###P6 mx end') p6MxEnd = true;
+        else if (line === '###P6 end') p6End = true;
     }
 }
 // One scheduler batch per iteration (rt.batchSize honours the M4 sampling
@@ -554,6 +558,54 @@ const laAfter = states().filter((s) => s.id === 'la-1').pop()?.state;
 check('S13 capture frozen after the window closed',
     laAfter?.status === 'done' && laAfter?.totalEdges === frozenAt,
     `edges ${frozenAt} → ${laAfter?.totalEdges}`);
+
+// ---- S14/S15: hardware SPI devices (M5, P6 phase) --------------------------
+// Reconfigure to the two register-level SPI devices, run into the round-0
+// P6 phase (after P5) and assert the MAX7219 register writes and the
+// ILI9341 command stream. Armed batches (60) make the P4→P6 stretch cost
+// millions of batches — the cap reflects that, the WINDOW is marker-bounded.
+msgs.length = 0;
+await rt.applyConfig({
+    perisVersion: 1,
+    devices: [
+        { id: 'mx-hw', type: 'max7219', bus: 'hwspi', chain: 1, pos: 0, mode: 'auto' },
+        { id: 'lcd-1', type: 'ili9341', dcPin: 15, csPin: 14, width: 320, height: 240 },
+    ],
+});
+// The S13 frozen-check loop runs unconditionally after P4 and can carry
+// the emulator through THIS round's P5/P6 before we get here (p6End already
+// latched) — reset the flag and wait for the NEXT round's P6.
+p6End = false;
+for (let i = 0; i < 12_000_000 && !p6End; i++) {
+    uart += emu.run_batch(rt.batchSize(50000));
+    trackMarkers();
+    rt.onBatchEnd();
+    batches++;
+    if (i % 100000 === 0) rt.flushStates(true);
+}
+await new Promise((r) => setTimeout(r, 60)); // trailing flush (33ms throttle)
+rt.flushStates(true);
+
+const mxHw = states().filter((s) => s.id === 'mx-hw').pop()?.state;
+check('S14 MAX7219 hwspi: P6 register writes decoded',
+    mxHw?.bus === 'hwspi'
+    && JSON.stringify(mxHw?.digits) === JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7])
+    && mxHw?.decodeMode === 255 && mxHw?.intensity === 5 && mxHw?.scanLimit === 7
+    && mxHw?.shutdown === false && mxHw?.test === false,
+    `digits=${JSON.stringify(mxHw?.digits)} transfers=${mxHw?.transfers} dropped=${mxHw?.dropped}`);
+check('S14 MAX7219 hwspi: SPI wiring auto-discovered',
+    mxHw?.wiring?.mosi === 12 && mxHw?.wiring?.sclk === 11,
+    JSON.stringify(mxHw?.wiring));
+
+const lcd = states().filter((s) => s.id === 'lcd-1').pop()?.state;
+check('S15 ILI9341: command stream decoded (window, sleep, display on)',
+    lcd?.win?.x1 === 319 && lcd?.win?.y1 === 239
+    && lcd?.sleep === false && lcd?.displayOn === true
+    && (lcd?.cmdCount ?? 0) >= 7 && (lcd?.dmaFeeds ?? 0) >= 10,
+    `win=${JSON.stringify(lcd?.win)} cmds=${lcd?.cmdCount} feeds=${lcd?.dmaFeeds} unknown=${lcd?.unknownCmds}`);
+check('S15 ILI9341: full 320×240 frame of pixels received',
+    lcd?.pixelsWritten === 320 * 240 && (lcd?.frames ?? 0) >= 1,
+    `px=${lcd?.pixelsWritten} frames=${lcd?.frames} (byte-exact pixel values have a known one-chunk offset — see SPI-M5.md)`);
 
 // S5: conflict rejected
 msgs.length = 0;

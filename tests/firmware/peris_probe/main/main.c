@@ -41,6 +41,24 @@
  *       through RMT ch1 on GPIO 10 (1 MHz resolution → 34-symbol frames
  *       that fit a post-transmission 48-word channel-RAM window).
  *
+ *   P5  hardware SPI2 master (M5): FSPICLK=GPIO11, MOSI=12, MISO=13,
+ *       CS=14. Phase A runs the bus without DMA so every transfer goes
+ *       through the W0..W15 register window — the firmware prints its own
+ *       read-back of those registers so the probe can cross-check the same
+ *       addresses through read_memory(). Each 4-byte transfer is bracketed
+ *       by markers with a 60 ms sleep after "tx": the probe flips the MISO
+ *       pad level inside that window (even k low, odd k high), and the rx
+ *       bytes then show whether the SPI model samples the pad or returns a
+ *       constant. One interrupt-driven transfer follows the polling ones so
+ *       the trans_done interrupt path is exercised too. Phase B re-inits
+ *       the bus with DMA and pushes a 256-byte frame from a buffer whose
+ *       address is printed — the probe snoops guest RAM for the payload.
+ *   P6  hardware SPI peripheral devices (M5): the MAX7219 register writes
+ *       (2-byte transfers, no DMA — pure W-window payload) and an
+ *       ILI9341-style command stream (esp_lcd shape: D/C GPIO15 low =
+ *       command, high = data; commands via the W window, one 320x240
+ *       RGB565 pixel burst via DMA, formula documented at p6_run).
+ *
  * The driver paths used here mirror esp-emulator's own smoke test app
  * (gpio_config, legacy ledc_* driver, rmt_new_tx_channel + copy encoder),
  * which the emulator is known to support.
@@ -51,6 +69,8 @@
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "driver/rmt_tx.h"
+#include "driver/spi_master.h"
+#include "soc/spi_struct.h"
 #include "esp_rom_sys.h"
 
 #define PIN_GPIO   8                       /* P1: plain blink            */
@@ -65,6 +85,10 @@
 #define PIN_I2C_SDA 2                      /* P4: soft I2C data          */
 #define PIN_IR_BB   5                      /* P4: NEC bit-bang TX        */
 #define PIN_IR_RMT  10                     /* P4: NEC RMT ch1 TX         */
+#define PIN_SPI_SCLK 11                    /* P5: hardware SPI2 clock    */
+#define PIN_SPI_MOSI 12                    /* P5: hardware SPI2 MOSI     */
+#define PIN_SPI_MISO 13                    /* P5: hardware SPI2 MISO     */
+#define PIN_SPI_CS   14                    /* P5: hardware SPI2 CS       */
 #define LED_COUNT  8
 #define RMT_RES_HZ (10 * 1000 * 1000)      /* 0.1 us per RMT tick        */
 #define I2C_HALF_US 25                     /* ~20 kHz soft I2C           */
@@ -294,6 +318,259 @@ static uint32_t bme_compensate_H(int32_t adc_H)
     if (v < 0) v = 0;
     if (v > 419430400) v = 419430400;
     return (uint32_t)(v >> 12);                  /* %RH ×1024 */
+}
+
+/* ---- P5: hardware SPI2 master (M5 feasibility) --------------------------- */
+/*
+ * Phase A: bus without DMA — every transfer rides the W0..W15 register
+ * window. Eight polling transfers of 4 bytes; "###P5 tx k=N" is printed a
+ * 60 ms sleep *before* the transfer so the probe can settle a MISO pad
+ * level (even k low, odd k high) — the rx bytes then reveal whether the
+ * emulated SPI samples the pad input or just returns a constant. One
+ * interrupt-driven transfer follows, then the firmware dumps its own view
+ * of the W window and control registers (ground truth for read_memory()).
+ * Phase B: bus re-initialised with DMA, one 256-byte frame from a static
+ * buffer whose address is printed so the probe can watch guest RAM.
+ */
+static uint8_t s_p5_dma_buf[256] __attribute__((aligned(4)));
+
+static void p5_run(void)
+{
+    esp_err_t err;
+    spi_device_handle_t spi = NULL;
+    spi_bus_config_t bus = {
+        .mosi_io_num = PIN_SPI_MOSI,
+        .miso_io_num = PIN_SPI_MISO,
+        .sclk_io_num = PIN_SPI_SCLK,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 64,
+    };
+    spi_device_interface_config_t dev = {
+        .clock_speed_hz = 1000 * 1000,
+        .mode = 0,
+        .spics_io_num = PIN_SPI_CS,
+        .queue_size = 4,
+    };
+    printf("###P5 start\n");
+    err = spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_DISABLED);
+    if (err != ESP_OK) { printf("###P5 init=%d\n", (int)err); printf("###P5 end\n"); return; }
+    err = spi_bus_add_device(SPI2_HOST, &dev, &spi);
+    if (err != ESP_OK) { printf("###P5 add=%d\n", (int)err); printf("###P5 end\n"); return; }
+
+    for (int k = 0; k < 8; k++) {
+        uint8_t tx[4] = { (uint8_t)(0xA0 | k), (uint8_t)~k, (uint8_t)k, 0x5A };
+        uint8_t rx[4] = { 0, 0, 0, 0 };
+        spi_transaction_t t = {
+            .length = 4 * 8,
+            .rxlength = 4 * 8,
+            .tx_buffer = tx,
+            .rx_buffer = rx,
+        };
+        printf("###P5 tx k=%d\n", k);          /* probe sets MISO level now */
+        vTaskDelay(pdMS_TO_TICKS(60));
+        err = spi_device_polling_transmit(spi, &t);
+        printf("###P5 rx k=%d e=%d b=%02x %02x %02x %02x\n",
+               k, (int)err, rx[0], rx[1], rx[2], rx[3]);
+        vTaskDelay(pdMS_TO_TICKS(60));
+    }
+
+    /* interrupt-driven path (trans_done) — one shot, after the polling data
+     * is already on the UART so a hang here stays diagnosable */
+    {
+        uint8_t tx[4] = { 0xC3, 0x3C, 0x55, 0xAA };
+        uint8_t rx[4] = { 0, 0, 0, 0 };
+        spi_transaction_t t = {
+            .length = 4 * 8,
+            .rxlength = 4 * 8,
+            .tx_buffer = tx,
+            .rx_buffer = rx,
+        };
+        printf("###P5 irq tx\n");
+        vTaskDelay(pdMS_TO_TICKS(60));
+        err = spi_device_transmit(spi, &t);
+        printf("###P5 irq rx e=%d b=%02x %02x %02x %02x\n",
+               (int)err, rx[0], rx[1], rx[2], rx[3]);
+    }
+
+    /* firmware-side ground truth: W window + control regs after the last
+     * no-DMA transfer (probe must see the same through read_memory) */
+    printf("###P5 w0=0x%08lx w1=0x%08lx w2=0x%08lx w3=0x%08lx\n",
+           (unsigned long)GPSPI2.data_buf[0], (unsigned long)GPSPI2.data_buf[1],
+           (unsigned long)GPSPI2.data_buf[2], (unsigned long)GPSPI2.data_buf[3]);
+    printf("###P5 cmd=0x%08lx user=0x%08lx misc=0x%08lx addr=0x%08lx\n",
+           (unsigned long)GPSPI2.cmd.val, (unsigned long)GPSPI2.user.val,
+           (unsigned long)GPSPI2.misc.val, (unsigned long)GPSPI2.addr.val);
+
+    /* phase B: DMA path with a >64-byte frame from a known address */
+    spi_bus_remove_device(spi);
+    spi_bus_free(SPI2_HOST);
+    bus.max_transfer_sz = sizeof(s_p5_dma_buf);
+    err = spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_CH_AUTO);
+    if (err != ESP_OK) { printf("###P5 dmainit=%d\n", (int)err); printf("###P5 end\n"); return; }
+    err = spi_bus_add_device(SPI2_HOST, &dev, &spi);
+    if (err != ESP_OK) { printf("###P5 dmadd=%d\n", (int)err); printf("###P5 end\n"); return; }
+    for (int i = 0; i < (int)sizeof(s_p5_dma_buf); i++) s_p5_dma_buf[i] = (uint8_t)(i ^ 0xA5);
+    spi_transaction_t dt = {
+        .length = sizeof(s_p5_dma_buf) * 8,
+        .tx_buffer = s_p5_dma_buf,
+    };
+    printf("###P5 dma buf=%p len=%u\n", s_p5_dma_buf, (unsigned)sizeof(s_p5_dma_buf));
+    vTaskDelay(pdMS_TO_TICKS(60));
+    err = spi_device_polling_transmit(spi, &dt);
+    printf("###P5 dma done e=%d\n", (int)err);
+    spi_bus_remove_device(spi);
+    spi_bus_free(SPI2_HOST);
+    printf("###P5 end\n");
+}
+
+/* ---- P6: hardware SPI peripheral devices (M5) ----------------------------- */
+/*
+ * MAX7219 frames + an ILI9341-style command stream over the hardware SPI2
+ * master, for register-level devices (spi-lib W window / GDMA walk):
+ *   mx  — bus WITHOUT DMA: every 2-byte register write is one W-window
+ *         transfer; markers name register+data so a test can cross-check
+ *         the decoded words.
+ *   lcd — bus WITH DMA (esp_lcd shape): D/C GPIO15 classifies transactions
+ *         (low = command byte, high = data), CS via the driver; commands
+ *         are W-window transfers, the 320x240 RGB565 pixel burst is one
+ *         DMA payload. Pixel formula (big-endian RGB565):
+ *           r=x*31/319, g=y*63/239, b=((x/8)+(y/4))&0x1f
+ */
+#define PIN_LCD_DC 15
+static uint8_t s_p6_lcd_buf[320 * 240 * 2] __attribute__((aligned(4)));
+
+static void p6_mx_write(spi_device_handle_t spi, uint8_t reg, uint8_t data)
+{
+    uint8_t frame[2] = { reg, data };
+    spi_transaction_t t = { .length = 16, .tx_buffer = frame };
+    esp_err_t err = spi_device_polling_transmit(spi, &t);
+    printf("###P6 mx w r=0x%02x d=0x%02x e=%d\n", reg, data, (int)err);
+}
+
+static void p6_lcd_cmd(spi_device_handle_t spi, uint8_t cmd)
+{
+    gpio_set_level(PIN_LCD_DC, 0);
+    spi_transaction_t t = { .length = 8, .tx_buffer = &cmd };
+    spi_device_polling_transmit(spi, &t);
+    gpio_set_level(PIN_LCD_DC, 1);
+}
+
+static void p6_lcd_data(spi_device_handle_t spi, const uint8_t *b, size_t n)
+{
+    gpio_set_level(PIN_LCD_DC, 1);
+    spi_transaction_t t = { .length = n * 8, .tx_buffer = b };
+    spi_device_polling_transmit(spi, &t);
+}
+
+static void p6_run(void)
+{
+    esp_err_t err;
+    spi_device_handle_t spi = NULL;
+    spi_bus_config_t bus = {
+        .mosi_io_num = PIN_SPI_MOSI,
+        .miso_io_num = PIN_SPI_MISO,
+        .sclk_io_num = PIN_SPI_SCLK,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 64,
+    };
+    spi_device_interface_config_t dev = {
+        .clock_speed_hz = 1000 * 1000,
+        .mode = 0,
+        .spics_io_num = PIN_SPI_CS,
+        .queue_size = 4,
+    };
+    printf("###P6 start\n");
+
+    /* --- mx: MAX7219 register writes over hardware SPI (no DMA) --- */
+    err = spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_DISABLED);
+    if (err == ESP_OK) err = spi_bus_add_device(SPI2_HOST, &dev, &spi);
+    if (err == ESP_OK) {
+        printf("###P6 mx start\n");
+        p6_mx_write(spi, 0x0C, 0x01);   /* shutdown off                */
+        p6_mx_write(spi, 0x09, 0xFF);   /* decode B on all digits      */
+        p6_mx_write(spi, 0x0B, 0x07);   /* scan limit 8 digits         */
+        p6_mx_write(spi, 0x0A, 0x05);   /* intensity 5                 */
+        for (int d = 0; d < 8; d++) {
+            p6_mx_write(spi, (uint8_t)(0x01 + d), (uint8_t)d);  /* Code B 0..7 */
+        }
+        p6_mx_write(spi, 0x0F, 0x01);   /* display test on             */
+        p6_mx_write(spi, 0x0F, 0x00);   /* display test off            */
+        printf("###P6 mx end\n");
+        spi_bus_remove_device(spi);
+        spi_bus_free(SPI2_HOST);
+        spi = NULL;
+    } else {
+        printf("###P6 mx init=%d\n", (int)err);
+    }
+
+    /* --- lcd: ILI9341 command stream over hardware SPI with DMA --- */
+    gpio_config_t dc_io = {
+        .pin_bit_mask = 1ULL << PIN_LCD_DC,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&dc_io));
+    gpio_set_level(PIN_LCD_DC, 1);
+    bus.max_transfer_sz = sizeof(s_p6_lcd_buf);
+    err = spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_CH_AUTO);
+    if (err == ESP_OK) err = spi_bus_add_device(SPI2_HOST, &dev, &spi);
+    if (err == ESP_OK) {
+        uint8_t param[4];
+        printf("###P6 lcd start\n");
+        p6_lcd_cmd(spi, 0x11);                        /* SLPOUT            */
+        printf("###P6 lcd cmd=0x11\n");
+        param[0] = 0x55;                              /* COLMOD 16-bit     */
+        p6_lcd_cmd(spi, 0x3A);
+        p6_lcd_data(spi, param, 1);
+        printf("###P6 lcd cmd=0x3a v=0x55\n");
+        param[0] = 0x00;                              /* MADCTL            */
+        p6_lcd_cmd(spi, 0x36);
+        p6_lcd_data(spi, param, 1);
+        printf("###P6 lcd cmd=0x36 v=0x00\n");
+        param[0] = 0; param[1] = 0; param[2] = (uint8_t)(319 >> 8); param[3] = (uint8_t)(319 & 0xff);
+        p6_lcd_cmd(spi, 0x2A);                        /* CASET 0..319      */
+        p6_lcd_data(spi, param, 4);
+        printf("###P6 lcd cmd=0x2a x1=319\n");
+        param[2] = (uint8_t)(239 >> 8); param[3] = (uint8_t)(239 & 0xff);
+        p6_lcd_cmd(spi, 0x2B);                        /* RASET 0..239      */
+        p6_lcd_data(spi, param, 4);
+        printf("###P6 lcd cmd=0x2b y1=239\n");
+        p6_lcd_cmd(spi, 0x2C);                        /* RAMWR             */
+        printf("###P6 lcd cmd=0x2c\n");
+        for (int y = 0; y < 240; y++) {
+            for (int x = 0; x < 320; x++) {
+                uint16_t v = (uint16_t)(((x * 31 / 319) << 11)
+                             | ((y * 63 / 239) << 5)
+                             | (((x / 8) + (y / 4)) & 0x1f));
+                s_p6_lcd_buf[(y * 320 + x) * 2] = (uint8_t)(v >> 8);
+                s_p6_lcd_buf[(y * 320 + x) * 2 + 1] = (uint8_t)(v & 0xff);
+            }
+        }
+        printf("###P6 lcd px=%u\n", (unsigned)sizeof(s_p6_lcd_buf));
+        /* Chunked pixel transactions (TFT_eSPI-style block pushing): each
+         * 4 kB block is its own DMA transaction, so register-level probes
+         * see every chunk's descriptor load — a single 150 kB burst arms
+         * and clears descriptors faster than any batch size can sample. */
+        for (size_t off = 0; off < sizeof(s_p6_lcd_buf); off += 4092) {
+            size_t n = sizeof(s_p6_lcd_buf) - off;
+            if (n > 4092) n = 4092;
+            p6_lcd_data(spi, s_p6_lcd_buf + off, n);
+            printf("###P6 lcd chunk=%u\n", (unsigned)n);
+        }
+        p6_lcd_cmd(spi, 0x29);                        /* DISPON            */
+        printf("###P6 lcd cmd=0x29\n");
+        printf("###P6 lcd end\n");
+        spi_bus_remove_device(spi);
+        spi_bus_free(SPI2_HOST);
+    } else {
+        printf("###P6 lcd init=%d\n", (int)err);
+    }
+
+    printf("###P6 end\n");
 }
 
 /* ---- P4b: NEC IR encoders ------------------------------------------------ */
@@ -687,5 +964,11 @@ void app_main(void)
 
         /* --- P4: bit-bang I2C + IR traffic (M4) --- */
         p4_run(round);
+
+        /* --- P5: hardware SPI2 master (M5) --- */
+        p5_run();
+
+        /* --- P6: hardware SPI peripheral devices (M5) --- */
+        p6_run();
     }
 }

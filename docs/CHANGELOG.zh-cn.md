@@ -6,6 +6,45 @@
 与英文版 CHANGELOG.md)。
 规则:主版本=协议/架构破坏性变更;次版本=新能力;修订=修复与小改。
 
+## peris 0.12.0
+
+- **硬件 SPI 设备**(M5——"不可行"里程碑的复查,见 docs/SPI-M5.zh-cn.md):
+  模拟器完整模拟 GP-SPI2,其 TX 流在寄存器级可观察,两项设备能力由此落地。
+- **MAX7219 硬件 SPI 总线**(`max7219.js` v1.1.0):新增 `bus: 'hwspi'` 配置,
+  直接从 SPI2 的 W0..W15 暂存窗口解码驱动传输(一次 `spi_device_transmit`
+  = 一个 LOAD 帧——寄存器模型与菊花链语义和位绑定总线完全同源,经同一
+  处理函数喂入)。不占用焊盘,接线自动发现(GPIO matrix 扫描中的
+  FSPICLK=63 / FSPID=65 / FSPICS0..5=68..73);`bus: 'bitbang'` 保持默认,
+  行为与之前完全一致。
+- **ILI9341 SPI 显示屏**(`ili9341.js` v1.0.0,新增):把 esp_lcd / Arduino
+  风格的 ILI9341 命令流(CASET/RASET 窗口、RAMWR RGB565/RGB666 像素、
+  COLMOD、MADCTL、睡眠/显示标志)渲染到画布。分辨率可配置(每轴 1..480,
+  默认 320×240)。命令与小参数经 W 窗口(无 DMA 驱动)或 GDMA 描述符链
+  (esp_lcd——DMA 绕过 W;D/C 焊盘是普通 CPU GPIO,负责分类并划界每个
+  事务);大块像素流由捕获到的描述符段按其客户内存地址排序拼接,另有
+  帧缓冲快照兜底。已知限制(已记录在案):当某个块的描述符装载在单个
+  批次内完成时,像素值可能带一个块的偏移(SPI-M5 文档)。
+- **框架**:`peris/devices/spi-lib.js`(共享:FSPI 接线发现、带 MS_DLEN
+  长度与拆除超时的 W 窗口引擎、带缓存头间隙恢复的 GDMA 链遍历);C3 MMIO
+  表新增 `spi` 节(寄存器 + GDMA outlink)。ili9341 为 `passive` 监听者
+  (不占焊盘,同逻辑分析仪)。
+- 固件:P6 阶段(硬件 SPI 无 DMA 的 MAX7219 寄存器写 + 带 DMA 分块
+  320×240 RGB565 突发的 ILI9341 命令流,D/C=GPIO15)。测试:
+  `tests/unit/spi.test.mjs`(18 例:发现、窗口引擎、GDMA 遍历、ILI9341
+  模型、hwspi 插件端到端)+ 冒烟 S14/S15。
+
+| 设备 | 版本 |
+|---|---|
+| led | 1.1.1 |
+| button / touch-button / toggle-switch | 1.1.0 |
+| pwm-led / rgb-led | 1.0.0 |
+| ws2812 | 1.0.0 |
+| bitbang-i2c-slave | 1.0.0 |
+| ir-nec | 1.0.0 |
+| max7219 | 1.1.0 |
+| ili9341 | 1.0.0 |
+| logic-analyzer | 1.1.0 |
+
 ## peris 0.11.0
 
 - **逻辑分析仪可探测任意引脚**(`logic-analyzer.js` v1.1.0):新增
