@@ -106,7 +106,9 @@ Reproduce: `node tests/m0_probe.mjs` (the probe) + `tests/firmware/peris_probe`
   upstream README; wasm strings show `src/periph/i2c.rs`). Not live-tested
   here yet; expect the same register-level story as SPI.
 - A real touch peripheral, ADC, I2S, SD-card device models, UART1: no wasm
-  API — waiting on esp-emulator upstream (see docs/ROADMAP.md).
+  API — waiting on esp-emulator upstream (see docs/ROADMAP.md). I2S got a
+  **soft-bus workaround** in 0.13.0 (M6 below); the hardware peripheral
+  itself is confirmed absent from the wasm.
 - Pin-level PWM/RMT/SPI waveform observation: structurally unviable
   (Q2a/Q3a, M5d), independent of sample rate.
 
@@ -241,3 +243,75 @@ overturned.** How-to for device authors: [SPI-M5.md](SPI-M5.md).
 - **Hardware I2C** is also modelled upstream (built-in EEPROM at 0x50,
   `--i2c-dev` register files on the CLI; browser build has neither flag
   nor export — but the register level should mirror SPI; untested).
+
+## M6 measurements (bit-bang I2S audio)
+
+### M6a — the wasm has no I2S model (evidence chain)
+
+Four independent checks against `vendor/esp-emu-browser/www/pkg/esp_emu_bg.wasm`
+(v0.51.0, the pinned sha256-verified build; upstream's latest release at the
+time of writing):
+
+1. **Strings**: `i2s` (case-insensitive) occurs **0 times** in the whole
+   binary — no module path, no register name, no log target. Controls from
+   the same binary: `spimem` 28, `i2c` 158, `ledc` 4, `rmt` 7. There is also
+   no `audio`/`codec`/`pcm` anywhere.
+2. **Module inventory**: the embedded Rust source paths (what
+   `tests/m5_wasm_static.mjs` inventories) enumerate every periph module —
+   63 `src/periph/*.rs` files including chip subdirectories (the native
+   Linux build of the same release shares all 63 and adds exactly two —
+   see [EMU-PERIPHERALS.md](EMU-PERIPHERALS.md)). **No i2s.rs**
+   under any path.
+3. **Register-block constants** (the decisive one): the ESP32-C3 I2S base
+   is **0x6002D000** (IDF `reg_base.h`). A modelled peripheral must compare
+   guest addresses against its block — those constants appear in the wasm
+   as signed-LEB128 `i32.const` immediates and/or LE-u32 data. Scanning the
+   base **and all 512 word addresses of the +0x00..0x1FF block** in four
+   encodings (sleb128, uleb128, LE-u32, ASCII hex): **0 hits for I2S**.
+   Controls from the same scan (base-address hits): every modelled
+   peripheral lights up 4–26× (UART0 26, RTCCNTL 20, GPIO 18, SPI2 8,
+   LEDC 8, I2C 8, GDMA 8 …); even unmodelled-but-referenced regions
+   (SARADC 0x60040000) show 4. I2S is the only peripheral block with
+   literally zero references in any encoding.
+4. **Runtime**: after booting the probe firmware to `###ROUND`,
+   `read_memory(0x6002D000, 0x100)` is all zero — identical to the TWAI
+   block (known-unwired), while LEDC / the GPIO matrix show live non-zero
+   state. (Idle-zero alone would not be conclusive — modelled-but-unused
+   I2C also reads zero — but it corroborates 1–3.)
+
+Upstream check: espressif/esp-emulator releases up to 0.51.0 mention I2S
+only once — a 0.48.0 *native-build* fix ("starting an I2S channel hung the
+calling task") for the early-bring-up ESP32-S31; the wasm has no
+corresponding code and C3 is unaffected. The esp-emulator GitHub repo
+ships no Rust sources (docs/test_apps/tools only) — the wasm analysis
+above is the authoritative method.
+
+**Verdict**: hardware I2S (esp_i2s driver, I2S-linked GDMA) cannot work on
+any current wasm build. The 0.13.0 device is a **soft I2S bus**.
+
+### M6b — soft-bus behaviour (measured on the P7 firmware)
+
+- **Edge separability**: the P7 firmware paces each BCLK half-period with a
+  ~24-iteration volatile loop ≈ 120 guest instructions ≥ FINE_BATCH (80) —
+  every edge lands in its own batch. Smoke S16 measured **1 dropped slot
+  out of ~500** across 3 P7 rounds (drops = slots whose bit count ≠ 16 at
+  the WS edge; decode resynchronises on WS, so neighbours stay clean).
+- **Both directions verified end-to-end**: injecting a constant +1000
+  "microphone" via `onCommand('mic')` lands in the firmware bit-exactly
+  (`###P7 rx sum=64000 peak=1000`, 64 slots × 1000, two consecutive
+  rounds), and the next round's echo TX decodes back as a 128-sample run
+  of 1000s in the device's pcm chunks. Trailing zeros after the echo are
+  legitimate: the firmware keeps clocking BCLK/WS through its RX phase
+  while DOUT idles low — a real codec would see the same silence.
+- **Rate**: detected ≈ 24 kHz from the median WS period (the soft master
+  runs faster than real-time audio; rate is display/playback metadata,
+  ratio-based per the M4 rule — never absolute-µs).
+- **Wall-clock divergence**: emulator time is compressed, so decoded audio
+  arrives faster than real time; the View schedules AudioBuffers
+  sequentially and drops oldest beyond a ~600 ms backlog (counted).
+  Latency/continuity are inherently limited — this is a debugging aid,
+  not a media player.
+- **Cost**: fine batches of 80 make one P7 round (256 slots ≈ 2M guest
+  instructions) ≈ 26k `run_batch(80)` calls — unproblematic in the smoke
+  run; continuous streaming in the browser keeps the same lease pattern
+  as the I2C slave.

@@ -395,6 +395,21 @@
 .mx-icon { display: block; }
 .mx-cap { text-align: center; font-size: 10.5px; color: var(--faint); font-family: var(--mono); }
 
+/* ---- M6 bit-bang I2S audio codec ------------------------------------------- */
+
+.i2sa-body { display: flex; flex-direction: column; align-items: stretch; gap: 6px; font-size: 11px; }
+.i2sa-status { font-family: var(--mono); color: var(--muted); text-align: center; }
+.i2sa-canvas { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
+.i2sa-icon { display: block; }
+.i2sa-ctrl { display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; }
+.i2sa-btn { background: var(--surface-3); border: 1px solid var(--border-strong); border-radius: 4px;
+    color: var(--muted); font-size: 10.5px; padding: 3px 10px; cursor: pointer;
+    transition: color 0.1s, border-color 0.1s; }
+.i2sa-btn:hover { color: var(--text); border-color: var(--accent); }
+.i2sa-btn.live { color: var(--accent-text); border-color: var(--accent);
+    box-shadow: 0 0 8px 1px var(--accent-soft); }
+.i2sa-vol { width: 90px; accent-color: var(--accent); }
+
 /* ---- ILI9341 SPI display (canvas painted by ili9341-lib) -------------------- */
 
 .lcd-canvas { border: 1px solid var(--line, #444); background: #000; }

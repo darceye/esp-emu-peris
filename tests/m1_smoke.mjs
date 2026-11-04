@@ -38,6 +38,12 @@
  *      slaves — a probe taps, it never drives). The ~20 kHz clock must land
  *      as alternating SCL edges inside the window, the buffer must freeze
  *      when the window closes and stay frozen afterwards.
+ *   S16 bitbang-i2s-audio (M6): the firmware's P7 soft-I2S master
+ *      (BCLK=GPIO4, WS=5, DOUT=6, DIN=7, 16-bit stereo) against the audio
+ *      codec — a constant "microphone" injected via onCommand('mic') must
+ *      arrive in the firmware's DIN assembly (###P7 rx sum/peak), and the
+ *      NEXT round's DOUT echo must decode back into the device's pcm chunks
+ *      (the browser-mic → firmware → browser-speaker loop, minus Web Audio).
  *
  * Batches run through rt.batchSize(50000): the M4 scheduler shrinks them
  * while the i2c/ir/max7219 devices hold sampling leases, so loop caps are
@@ -76,7 +82,7 @@ initSync(readFileSync(path.join(WWW, 'pkg/esp_emu_bg.wasm')));
 
 const { PerisRuntime } = await import(pathToFileURL(path.join(REPO, 'build/core/runtime.js')).href);
 const devices = {};
-for (const m of ['led', 'button', 'touch-button', 'toggle-switch', 'pwm-led', 'rgb-led', 'ws2812', 'bitbang-i2c-slave', 'ir-nec', 'max7219', 'ili9341', 'logic-analyzer']) {
+for (const m of ['led', 'button', 'touch-button', 'toggle-switch', 'pwm-led', 'rgb-led', 'ws2812', 'bitbang-i2c-slave', 'ir-nec', 'max7219', 'ili9341', 'bitbang-i2s-audio', 'logic-analyzer']) {
     devices[m] = await import(pathToFileURL(path.join(REPO, `peris/devices/${m}.js`)).href);
 }
 const i2cLib = await import(pathToFileURL(path.join(REPO, 'peris/devices/i2c-lib.js')).href);
@@ -117,6 +123,9 @@ let inP3 = false;
 let inP4 = false;
 let p6MxEnd = false;
 let p6End = false;
+let p7RxLines = [];  // "n=64 sum=… peak=…" from each round's ###P7 rx
+let p7TxSrc = [];    // src=sine|echo of each round's TX
+let p7EndCount = 0;  // completed P7 phases seen
 const p3Colours = []; // logged colours of the P3 bursts (walk + grad marker)
 const p1bSamples = []; // { sw, tch, n } lines printed inside P1b
 const p4Lines = [];   // raw ###P4 lines (parsed by the S10/S11 sections)
@@ -153,6 +162,10 @@ function trackMarkers() {
         else if (line.startsWith('###P4 ')) p4Lines.push(line.slice(6));
         else if (line === '###P6 mx end') p6MxEnd = true;
         else if (line === '###P6 end') p6End = true;
+        // "###P7 rx n=64 sum=1234 peak=1000" — the mic verdict per round
+        else if ((m = line.match(/^###P7 rx n=\d+ sum=(-?\d+) peak=(\d+)/))) p7RxLines.push({ sum: +m[1], peak: +m[2] });
+        else if ((m = line.match(/^###P7 tx n=\d+ src=(\w+)/))) p7TxSrc.push(m[1]);
+        else if (line.startsWith('###P7 end')) p7EndCount++;
     }
 }
 // One scheduler batch per iteration (rt.batchSize honours the M4 sampling
@@ -570,6 +583,7 @@ await rt.applyConfig({
     devices: [
         { id: 'mx-hw', type: 'max7219', bus: 'hwspi', chain: 1, pos: 0, mode: 'auto' },
         { id: 'lcd-1', type: 'ili9341', dcPin: 15, csPin: 14, width: 320, height: 240 },
+        { id: 'i2s-1', type: 'bitbang-i2s-audio' },   // S16: BCLK 4 / WS 5 / DOUT 6 / DIN 7
     ],
 });
 // The S13 frozen-check loop runs unconditionally after P4 and can carry
@@ -606,6 +620,68 @@ check('S15 ILI9341: command stream decoded (window, sleep, display on)',
 check('S15 ILI9341: full 320×240 frame of pixels received',
     lcd?.pixelsWritten === 320 * 240 && (lcd?.frames ?? 0) >= 1,
     `px=${lcd?.pixelsWritten} frames=${lcd?.frames} (byte-exact pixel values have a known one-chunk offset — see SPI-M5.md)`);
+
+// ---- S16: soft I2S audio codec (M6, P7 phase) ------------------------------
+// The firmware's P7 is the I2S master (BCLK 4 / WS 5 / DOUT 6 / DIN 7).
+// RX: inject a constant +1000 "microphone" through onCommand('mic') while
+// the phase runs — the firmware's "###P7 rx sum/peak" line reports what it
+// assembled from DIN. TX: the NEXT round's P7 streams the echo of that
+// capture back on DOUT, which the device decodes into its pcm chunks (the
+// full browser-mic → firmware → browser-speaker loop, minus Web Audio).
+const MIC_LEVEL = 1000;
+const micChunk = new Int16Array(512).fill(MIC_LEVEL);
+p7RxLines = [];
+p7TxSrc = [];
+p7EndCount = 0;
+let i2sPcm2 = [];    // decoded TX samples of the SECOND P7 only (the echo
+                     // round — the first may still carry pre-config garbage)
+let i2sLast = null;
+// one full P7 after the S15 window, then the next round's echo P7
+for (let i = 0; i < 20_000_000 && p7EndCount < 2; i++) {
+    if (i % 2000 === 0) rt.command('i2s-1', 'mic', { pcm: micChunk });
+    uart += emu.run_batch(rt.batchSize(50000));
+    trackMarkers();
+    rt.onBatchEnd();
+    batches++;
+    if (i % 2000 === 0) {
+        rt.flushStates(true);
+        const st = states().filter((s) => s.id === 'i2s-1').pop()?.state;
+        if (st) {
+            i2sLast = st;
+            if (p7EndCount >= 1 && st.pcm) for (let k = 0; k < st.pcm.length; k++) i2sPcm2.push(st.pcm[k]);
+        }
+    }
+}
+await new Promise((r) => setTimeout(r, 60));
+rt.flushStates(true);
+const i2sTail = states().filter((s) => s.id === 'i2s-1').pop()?.state;
+if (p7EndCount >= 1 && i2sTail?.pcm) for (let k = 0; k < i2sTail.pcm.length; k++) i2sPcm2.push(i2sTail.pcm[k]);
+
+const rx0 = p7RxLines[0], rx1 = p7RxLines[1];
+check('S16 firmware received the injected microphone on DIN',
+    rx0 != null && rx0.peak === MIC_LEVEL && rx0.sum >= 60800 && rx1 != null && rx1.peak === MIC_LEVEL,
+    `rx rounds: ${JSON.stringify(p7RxLines)} (64 slots @ ${MIC_LEVEL} → sum 64000)`);
+check('S16 device decoded the DOUT stream (frames, rate, low drops)',
+    i2sLast != null && (i2sLast.frames ?? 0) >= 64
+    && (i2sLast.rate ?? 0) > 1000 && (i2sLast.drops ?? 99) <= 64,
+    `frames=${i2sLast?.frames} rate=${i2sLast?.rate} drops=${i2sLast?.drops} underruns=${i2sLast?.underruns}`);
+// the second P7's TX echoes the first round's capture: nearly every decoded
+// sample must be the injected level (the mic → firmware → DOUT round trip)
+// The echo TX (128 slots) must appear as one long run of the injected
+// level. Trailing zeros are legitimate: the firmware keeps clocking
+// BCLK/WS through its RX phase while DOUT idles low — a real codec sees
+// the same silence — so a whole-pcm ratio would under-count.
+let run = 0, best = 0, echoed = 0;
+for (const v of i2sPcm2) {
+    if (v === MIC_LEVEL) { run++; echoed++; if (run > best) best = run; }
+    else run = 0;
+}
+if (process.env.VERBOSE) console.log('DEBUG pcm2 head:', JSON.stringify(i2sPcm2.slice(0, 8)),
+    'mid:', JSON.stringify(i2sPcm2.slice(120, 136)), 'tail:', JSON.stringify(i2sPcm2.slice(-8)), 'len', i2sPcm2.length,
+    'txSrc:', JSON.stringify(p7TxSrc));
+check('S16 mic audio echoed back through DOUT (browser loop closure)',
+    i2sPcm2.length >= 100 && best >= 100,
+    `longest run of ${MIC_LEVEL}: ${best} (echo TX = 128 slots), ${echoed}/${i2sPcm2.length} total`);
 
 // S5: conflict rejected
 msgs.length = 0;

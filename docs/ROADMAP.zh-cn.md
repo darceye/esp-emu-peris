@@ -105,7 +105,8 @@ UPGRADE.zh-cn.md):
 | 硬件 I2C 设备模型 | 控制器上游已模拟(内置 0x50 EEPROM、CLI `--i2c-dev`);浏览器版寄存器访问预计与 SPI 同构 | 🔶 未实测——照 M5 方法探一遍 |
 | 真触摸外设 | touch 外设模拟 | ❌(触摸按键以 GPIO 语义代替) |
 | ADC(电位器等) | adc 模拟 | ❌ |
-| I2S 音频 | i2s 模拟 | ❌ |
+| I2S 音频——软件总线 | 无需上游:位捆绑主机固件 + M4 引擎模式 | ✅ 0.13.0(`bitbang-i2s-audio`,麦克风输入+播放输出) |
+| I2S 音频——硬件 | i2s 模拟 | ❌(wasm 完全未模拟 I2S——M6 证据链见 FEASIBILITY.zh-cn.md;软件总线即替代方案) |
 | UART1 外设 | wasm 暴露 uart1(CLI 有 `--uart1-tcp`) | ❌ |
 | 状态快照保存/恢复 | save/load API | ❌ |
 

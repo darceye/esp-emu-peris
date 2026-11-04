@@ -11,6 +11,7 @@
         { "module": "ir-nec.js" },
         { "module": "max7219.js" },
         { "module": "ili9341.js" },
+        { "module": "bitbang-i2s-audio.js" },
         { "module": "logic-analyzer.js" }
     ]
 }

@@ -19,7 +19,8 @@ npm run sync               # 发布进 vendor/esp-emu-browser/www(先 build;--cl
 
 架构与数据流见 `docs/ARCHITECTURE.zh-cn.md`;外设开发见 `docs/DEVICE-API.zh-cn.md`;
 esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.zh-cn.md`(M0 实测);
-硬件 SPI 开发(TX 捕获 + RX 注入)见 `docs/SPI-M5.zh-cn.md`。
+硬件 SPI 开发(TX 捕获 + RX 注入)见 `docs/SPI-M5.zh-cn.md`;
+模拟器外设支持矩阵(wasm 对原生 Linux 构建)见 `docs/EMU-PERIPHERALS.zh-cn.md`。
 
 ## 1. 环境坑(本机)
 
@@ -87,6 +88,19 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
   一个相位。
 - **RMT `CHnSTATUS.APB_MEM_WADDR` 恒读 0**(未实现)——发送中途拼接通道
   RAM 不可行,只能用发送后的窗口。
+- **I2S 完全未被模拟**(M6,五层证据):二进制中 0 处 `i2s` 字符串、
+  无外设模块,C3 的 I2S 块 0x6002D000 在**任何**编码形式下(sleb128
+  立即数 / LE-u32 数据 / 十六进制串)都不出现,而每个已模拟外设的
+  基址都有 4–26 次命中——寄存器级 I2S 不可能存在。音频走**软件 I2S
+  总线**(`peris/devices/i2s-lib.js` + `bitbang-i2s-audio.js`):固件是
+  位捆绑主机(探针固件的 P7 相位即参考实现;BCLK 半周期须配速 ≥
+  微批次 80 条指令,否则多条边落入同一批次、槽位被丢——解码器在 WS
+  上重同步)。解码出的 PCM 以**增量 getState 块**传输(33ms 节流 +
+  尾随冲刷保证送达——绝不缓存该块);浏览器麦克风经
+  `onCommand('mic')` 流入(getUserMedia 需用户手势 + 安全上下文;
+  ScriptProcessor 必须经零增益节点泵送,绝不能直连扬声器——啸叫)。
+  模拟器时间相对墙钟是压缩的:播放采用有界积压 + 丢最旧;不要承诺
+  实时连续性。
 - **BME280 的 dig_T1/dig_P1 是 uint16**(Bosch 布局):36477 在 int16 里静默
   变负——T/H 仍吻合、只有 P 偏离(正是靠这个特征定位的 bug)。
 - `gpio_set_input` 默认电平高(上拉);能触发固件 GPIO 中断(可靠)。

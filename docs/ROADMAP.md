@@ -130,7 +130,8 @@ waits on esp-emulator releases (upgrade procedure in UPGRADE.md):
 | hardware I2C device models | controller is modelled upstream (built-in EEPROM at 0x50, CLI `--i2c-dev`); browser register access should mirror SPI | 🔶 untested — probe like M5 |
 | real touch peripheral | touch peripheral emulation | ❌ (touch button stands in with GPIO semantics) |
 | ADC (potentiometers etc.) | adc emulation | ❌ |
-| I2S audio | i2s emulation | ❌ |
+| I2S audio — soft bus | none needed: bit-bang master firmware + the M4 engine pattern | ✅ 0.13.0 (`bitbang-i2s-audio`, mic in + playback out) |
+| I2S audio — hardware | i2s emulation | ❌ (wasm models no I2S at all — M6 evidence chain in FEASIBILITY.md; the soft bus is the workaround) |
 | UART1 peripheral | wasm-exposed uart1 (CLI has `--uart1-tcp`) | ❌ |
 | state snapshot save/restore | save/load API | ❌ |
 

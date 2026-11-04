@@ -8,6 +8,53 @@ CHANGELOG.zh-cn.md).
 Rules: major = breaking protocol/architecture change; minor = new capability;
 patch = fixes and small changes.
 
+## peris 0.13.0
+
+- **Bit-bang I2S audio codec** (M6 — see the evidence chain in
+  docs/FEASIBILITY.md): the wasm models **no I2S peripheral at all** (zero
+  `i2s` strings in the binary, no periph module, zero references to the C3
+  I2S register block 0x6002D000 in any encoding — sleb128 immediates,
+  LE-u32 data, hex strings; block reads return 0), so the esp_i2s driver
+  cannot work. The audio path rides what IS observable: a firmware
+  bit-banged soft-I2S master on four GPIOs, exactly like the M4 I2C slave.
+- **`bitbang-i2s-audio.js` v1.0.0** (new): microphone + speaker codec on
+  configurable BCLK/WS/DOUT/DIN pins (defaults 4/5/6/7). Decodes the
+  firmware's DOUT stream (Philips framing, 16/24/32-bit slots, mono or
+  stereo, MSB-first, WS-phase-aligned slot pairing; slots with lost edges
+  are dropped and decoding resynchronises on the next WS edge) into PCM
+  chunks carried by the throttled state channel; the View plays them
+  through Web Audio (AudioBuffer scheduling at the detected rate, bounded
+  backlog with drop-oldest — emulator time is compressed relative to wall
+  time). The browser microphone flows the other way: getUserMedia +
+  ScriptProcessor capture, linear resample to 8/16/48 kHz, Int16 chunks
+  via `onCommand('mic')`; the engine answers bit-by-bit on the DIN input
+  path (data changes on the falling BCLK edge — the M4 answer cadence),
+  silence on underrun, drop-oldest queue cap. A 440 Hz test tone feeds
+  the same path where no microphone is available. Frame rate is estimated
+  from the median WS period in emulator cycles (ratio-based, M4 rule).
+  `sharedBus` device — the logic analyzer may probe the wires.
+- **Probe firmware P7 phase**: soft-I2S master reference (BCLK=4, WS=5,
+  DOUT=6, DIN=7; paced bit loop — every edge lands in its own fine
+  batch). Round 0 streams a sine table, later rounds echo the previous
+  round's DIN capture (browser mic → firmware → speaker, the full loop).
+- Tests: `tests/unit/i2s.test.mjs` (17 cases: engine framing/robustness/
+  inject, helpers, plugin end-to-end) + smoke S16 (mic injection arrives
+  in the firmware's `###P7 rx` sum/peak; the echo decodes back through
+  DOUT).
+
+| device | version |
+|---|---|
+| led | 1.1.1 |
+| button / touch-button / toggle-switch | 1.1.0 |
+| pwm-led / rgb-led | 1.0.0 |
+| ws2812 | 1.0.0 |
+| bitbang-i2c-slave | 1.0.0 |
+| ir-nec | 1.0.0 |
+| max7219 | 1.1.0 |
+| ili9341 | 1.0.0 |
+| bitbang-i2s-audio | 1.0.0 |
+| logic-analyzer | 1.1.0 |
+
 ## peris 0.12.0
 
 - **Hardware-SPI devices** (M5, the "impossible" milestone revisited — see

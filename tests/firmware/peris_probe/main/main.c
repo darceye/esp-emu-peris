@@ -58,12 +58,24 @@
  *       ILI9341-style command stream (esp_lcd shape: D/C GPIO15 low =
  *       command, high = data; commands via the W window, one 320x240
  *       RGB565 pixel burst via DMA, formula documented at p6_run).
+ *   P7  soft I2S audio codec (M6): the wasm models no I2S peripheral at
+ *       all, so this phase IS the master — BCLK=GPIO4, WS=5, DOUT=6,
+ *       DIN=7, 16-bit stereo Philips framing, WS toggling with the
+ *       closing BCLK fall. TX streams a known sine table the first round
+ *       and the previous round's RX capture afterwards (the mic echo:
+ *       browser mic → device DIN → this firmware → DOUT → browser
+ *       speaker); RX assembles left slots and prints sum/peak so the
+ *       probe can verify the injected microphone data. The bit loop is
+ *       paced by a volatile decrement (I2S_PACE_LOOPS) so every pin edge
+ *       lands in its own fine-sampling batch (edges closer than one
+ *       batch are lost, AGENT.md §2).
  *
  * The driver paths used here mirror esp-emulator's own smoke test app
  * (gpio_config, legacy ledc_* driver, rmt_new_tx_channel + copy encoder),
  * which the emulator is known to support.
  */
 #include <stdio.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -89,10 +101,16 @@
 #define PIN_SPI_MOSI 12                    /* P5: hardware SPI2 MOSI     */
 #define PIN_SPI_MISO 13                    /* P5: hardware SPI2 MISO     */
 #define PIN_SPI_CS   14                    /* P5: hardware SPI2 CS       */
+#define PIN_I2S_BCLK 4                     /* P7: soft I2S bit clock     */
+#define PIN_I2S_WS   5                     /* P7: soft I2S word select   */
+#define PIN_I2S_DOUT 6                     /* P7: soft I2S data out      */
+#define PIN_I2S_DIN  7                     /* P7: soft I2S data in       */
 #define LED_COUNT  8
 #define RMT_RES_HZ (10 * 1000 * 1000)      /* 0.1 us per RMT tick        */
 #define I2C_HALF_US 25                     /* ~20 kHz soft I2C           */
 #define IR_CARRIER_HALF_US 13              /* ~38 kHz NEC carrier        */
+#define I2S_PACE_LOOPS 24                  /* ~120 instr per BCLK half   */
+#define P7_FRAMES 64                       /* P7: frames per phase       */
 
 static rmt_channel_handle_t s_chan;
 static rmt_encoder_handle_t s_enc;
@@ -573,6 +591,124 @@ static void p6_run(void)
     printf("###P6 end\n");
 }
 
+/* ---- P7: soft I2S audio codec (M6) ---------------------------------------- */
+
+/*
+ * The bit-bang master documented in the header. Every pin write is paced
+ * by I2S_PACE_LOOPS volatile-decrement iterations (~120 guest
+ * instructions ≈ one fine-sampling batch at 80) so the codec device sees
+ * each edge in its own batch: DOUT settles a batch before the sampling
+ * rise, DIN (driven by the device on the previous fall) is read a batch
+ * after the rise, and WS toggles together with the slot-closing fall.
+ */
+static void i2s_pace(void)
+{
+    for (volatile int i = 0; i < I2S_PACE_LOOPS; i++) {
+    }
+}
+
+/* round(amp * sin(2*pi*k/32)) — built at runtime with the exact formula
+ * the device-side sineTable() uses (tests/bit-exact by construction);
+ * the smoke test decodes DOUT and compares exactly */
+#define P7_SINE_N 32
+#define P7_SINE_AMP 12000
+static int16_t s_p7_sine[P7_SINE_N];
+
+static void p7_sine_init(void)
+{
+    for (int k = 0; k < P7_SINE_N; k++) {
+        double v = P7_SINE_AMP * sin(2.0 * M_PI * k / P7_SINE_N);
+        s_p7_sine[k] = (int16_t)(v >= 0.0 ? (int)(v + 0.5) : (int)(v - 0.5));
+    }
+}
+
+static int16_t s_p7_echo[2 * P7_FRAMES];   /* interleaved L/R from RX */
+static int s_p7_echo_len;                  /* samples captured (<= 2*P7_FRAMES) */
+
+static void p7_tx_slot(uint16_t v)
+{
+    for (int i = 15; i >= 0; i--) {
+        gpio_set_level(PIN_I2S_DOUT, (v >> i) & 1);
+        i2s_pace();
+        gpio_set_level(PIN_I2S_BCLK, 1);
+        i2s_pace();
+        gpio_set_level(PIN_I2S_BCLK, 0);
+    }
+    gpio_set_level(PIN_I2S_WS, !gpio_get_level(PIN_I2S_WS)); /* closing fall */
+}
+
+static uint16_t p7_rx_slot(void)
+{
+    uint16_t v = 0;
+    for (int i = 0; i < 16; i++) {
+        gpio_set_level(PIN_I2S_BCLK, 1);
+        i2s_pace();
+        v = (uint16_t)((v << 1) | (gpio_get_level(PIN_I2S_DIN) & 1));
+        gpio_set_level(PIN_I2S_BCLK, 0);
+        i2s_pace();
+    }
+    gpio_set_level(PIN_I2S_WS, !gpio_get_level(PIN_I2S_WS));
+    return v;
+}
+
+static void p7_run(int round)
+{
+    printf("###P7 start\n");
+    p7_sine_init();
+    gpio_config_t io = {
+        .pin_bit_mask = (1ULL << PIN_I2S_BCLK) | (1ULL << PIN_I2S_WS) | (1ULL << PIN_I2S_DOUT),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&io));
+    io.pin_bit_mask = 1ULL << PIN_I2S_DIN;
+    io.mode = GPIO_MODE_INPUT;
+    ESP_ERROR_CHECK(gpio_config(&io));
+    gpio_set_level(PIN_I2S_BCLK, 0);
+    gpio_set_level(PIN_I2S_WS, 0);         /* WS low = left slot */
+    gpio_set_level(PIN_I2S_DOUT, 0);
+
+    /* TX: round 0 streams the sine table; later rounds echo the previous
+     * round's microphone capture (the full browser loop). */
+    printf("###P7 tx n=%d src=%s\n", P7_FRAMES, (round > 0 && s_p7_echo_len) ? "echo" : "sine");
+    for (int f = 0; f < P7_FRAMES; f++) {
+        int16_t l, r;
+        if (round > 0 && s_p7_echo_len >= 2) {
+            l = s_p7_echo[(2 * f) % s_p7_echo_len];
+            r = s_p7_echo[(2 * f + 1) % s_p7_echo_len];
+        } else {
+            l = s_p7_sine[(2 * f) % 32];
+            r = s_p7_sine[(2 * f + 1) % 32];
+        }
+        p7_tx_slot((uint16_t)l);
+        p7_tx_slot((uint16_t)r);
+    }
+    printf("###P7 tx done n=%d\n", P7_FRAMES);
+
+    /* RX: capture P7_FRAMES left slots (the mic is duplicated on both
+     * channels by the device), keep sum/peak for the probe. */
+    int32_t sum = 0;
+    int peak = 0;
+    s_p7_echo_len = 0;
+    for (int f = 0; f < P7_FRAMES; f++) {
+        uint16_t l = p7_rx_slot();
+        uint16_t r = p7_rx_slot();
+        int16_t ls = (int16_t)l;
+        sum += ls;
+        int a = ls < 0 ? -ls : ls;
+        if (a > peak) peak = a;
+        s_p7_echo[2 * f] = ls;
+        s_p7_echo[2 * f + 1] = (int16_t)r;
+        s_p7_echo_len += 2;
+    }
+    printf("###P7 rx n=%d sum=%ld peak=%d\n", P7_FRAMES, (long)sum, peak);
+    gpio_set_level(PIN_I2S_BCLK, 0);
+    gpio_set_level(PIN_I2S_DOUT, 0);
+    printf("###P7 end\n");
+}
+
 /* ---- P4b: NEC IR encoders ------------------------------------------------ */
 
 static void ir_carrier_us(int us)
@@ -970,5 +1106,8 @@ void app_main(void)
 
         /* --- P6: hardware SPI peripheral devices (M5) --- */
         p6_run();
+
+        /* --- P7: soft I2S audio codec (M6) --- */
+        p7_run(round);
     }
 }

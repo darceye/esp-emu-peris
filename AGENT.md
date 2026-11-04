@@ -21,7 +21,8 @@ npm run sync               # publish into vendor/esp-emu-browser/www (build firs
 Architecture & data flow: `docs/ARCHITECTURE.md`; peripheral development:
 `docs/DEVICE-API.md`; esp-emulator wasm capability limits: `docs/EMU-API.md`
 and `docs/FEASIBILITY.md` (M0 measurements); hardware SPI development
-(TX capture + RX injection): `docs/SPI-M5.md`.
+(TX capture + RX injection): `docs/SPI-M5.md`; emulator peripheral support
+matrix, wasm vs native Linux builds: `docs/EMU-PERIPHERALS.md`.
 
 ## 1. Environment pitfalls (this machine)
 
@@ -107,6 +108,22 @@ and `docs/FEASIBILITY.md` (M0 measurements); hardware SPI development
   pulses lose edges, and M0's instruction-count shapes no longer fit a phase.
 - **RMT `CHnSTATUS.APB_MEM_WADDR` reads 0 always** (not implemented) -
   mid-transmission channel-RAM stitching is impossible; post-TX windows only.
+- **I2S is not modelled at all (M6, five-layer evidence)**: 0 `i2s`
+  strings in the binary, no periph module, and the C3 I2S block
+  0x6002D000 appears in **no** encoding (sleb128 immediates / LE-u32
+  data / hex strings) while every modelled peripheral's base shows 4-26
+  hits — register-level I2S cannot exist. Audio rides a **soft I2S bus**
+  (`peris/devices/i2s-lib.js` + `bitbang-i2s-audio.js`): the firmware is
+  the bit-bang master (P7 phase of the probe firmware is the reference;
+  pace BCLK half-periods ≥ the fine batch of 80 instructions or edges
+  land in one batch and slots drop — the decoder resyncs on WS).
+  Decoded PCM travels as **incremental getState chunks** (the 33 ms
+  throttle + trailing flush guarantee delivery — never cache the chunk);
+  the browser mic flows in through `onCommand('mic')` (getUserMedia needs
+  a user gesture + secure context; ScriptProcessor must pump through a
+  zero-gain node, never the speakers — feedback). Emulator time is
+  compressed vs wall time: playback uses a bounded backlog with
+  drop-oldest; do not promise real-time continuity.
 - **BME280 dig_T1/dig_P1 are uint16** (Bosch layout): 36477 in int16 silently
   becomes negative - T/H still matched, only P diverged (that signature is
   how the bug was found).
