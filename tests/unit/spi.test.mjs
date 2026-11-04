@@ -346,7 +346,7 @@ test('max7219: hwspi DMA feeds — dedupe identical, decode new content (S3)', (
         putBuf(regs, 0x3fc88000, bytes);
         putDesc(regs, 0x3fc90000, { len: bytes.length, buf: 0x3fc88000 });
         regs.set(S3_MMIO.spi.gdma.outLink[0], 0x90000);
-        dev.onBatch();
+        dev.onBatch(); dev.onBatch();   // two polls: the torn-read gate
     };
     arm([0x0b, 0x07]);          // scan limit 7
     arm([0x09, 0xff]);          // decode mode
@@ -364,5 +364,45 @@ test('max7219: hwspi DMA feeds — dedupe identical, decode new content (S3)', (
     assert.equal(st.transfers, 0, 'no-DMA W window stays idle');
     assert.equal(st.dropped, 0);
     assert.equal(dev.dmaChannel, 0, 'the GDMA channel went sticky');
+    dev.destroy();
+});
+
+test('max7219: torn DMA buffer reads never feed (two-poll confirmation)', () => {
+    // During a heal burst the CPU rewrites the 2-byte DMA buffer per
+    // transaction; a poll between the two stores reads a torn frame —
+    // measured on duel_of_8 as intensity=7 / scan-limit=0 ghosts. A torn
+    // state survives one poll at most; real transactions span hundreds of
+    // batches, so requiring a second consecutive identical signature keeps
+    // every real frame and drops every torn one.
+    const { regs, ctx } = makeSpiCtx();
+    ctx.mmio = S3_MMIO;
+    ctx.chip = 'esp32s3';
+    const dev = new mx.Device(ctx, { id: 't', type: 'max7219', bus: 'hwspi' });
+    const arm = (bytes) => {
+        putBuf(regs, 0x3fc88000, bytes);
+        putDesc(regs, 0x3fc90000, { len: bytes.length, buf: 0x3fc88000 });
+        regs.set(S3_MMIO.spi.gdma.outLink[0], 0x90000);
+        dev.onBatch();
+    };
+    arm([0x0b, 0x07]);          // first sighting…
+    let st = dev.getState();
+    assert.equal(st.scanLimit, 0, 'a single poll must not feed yet');
+    arm([0x0b, 0x07]);          // …second poll confirms
+    st = dev.getState();
+    assert.equal(st.scanLimit, 7);
+    // torn flapping between the real frame and ghosts never confirms
+    for (let i = 0; i < 8; i++) {
+        arm([0x0b, 0x07]);
+        arm([0x0b, 0x00]);      // torn [reg, foreign byte] ghost
+        arm([0x0b, 0x04]);
+        arm([0x0b, 0x00]);
+    }
+    st = dev.getState();
+    assert.equal(st.scanLimit, 7, 'ghosts never latched');
+    assert.equal(st.dropped, 0);
+    // a sustained real change still lands after two polls
+    arm([0x0a, 0x05]); arm([0x0a, 0x05]);
+    st = dev.getState();
+    assert.equal(st.intensity, 5);
     dev.destroy();
 });

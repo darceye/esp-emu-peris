@@ -8,6 +8,36 @@ CHANGELOG.zh-cn.md).
 Rules: major = breaking protocol/architecture change; minor = new capability;
 patch = fixes and small changes.
 
+## peris 0.14.3
+
+- **hwspi DMA torn-read gate** (`max7219.js` v1.3.2): duel_of_8 showed a
+  score digit flickering from round 2 until the next IR fire — measured
+  root cause: during the 25 ms self-heal burst the CPU rewrites the
+  2-byte GDMA buffer per transaction, and a poll landing between the two
+  stores reads a torn frame (impossible registers observed live:
+  intensity=7 and scan-limit=0, a few per ~2000 heals; a torn digit data
+  byte shows as a wrong glyph for one render, i.e. flicker). A frame now
+  needs its signature confirmed on TWO consecutive polls — torn states
+  survive one poll, real transactions span hundreds of batches (16 bits
+  @ 100 kHz ≈ 427 fine batches) — every real frame still lands, every
+  torn one is dropped. Verified by re-running the instrumented firmware
+  probe: zero impossible frames over 35k+ feeds. Not a duel_of_8 bug.
+- Test: torn/ghost flap never latches, single-poll frames wait for a
+  witness, sustained changes still land (+1 in `spi.test.mjs`).
+
+| device | version |
+|---|---|
+| led | 1.1.1 |
+| button / touch-button / toggle-switch | 1.1.0 |
+| pwm-led / rgb-led | 1.0.0 |
+| ws2812 | 1.0.0 |
+| bitbang-i2c-slave | 1.0.0 |
+| ir-nec | 1.0.0 |
+| max7219 | 1.3.2 |
+| ili9341 | 1.0.0 |
+| bitbang-i2s-audio | 1.0.0 |
+| logic-analyzer | 1.1.0 |
+
 ## peris 0.14.2
 
 - **seg7 canvas clipped the 8th digit** (`max7219-lib.js`): the canvas

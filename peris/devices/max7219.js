@@ -88,7 +88,7 @@ const isDmaFrame = (b) => b.length >= 2 && b.length <= 16 && b.length % 2 === 0
 
 export class Device {
     static typeId = 'max7219';
-    static version = '1.3.1';
+    static version = '1.3.2';
     static title = 'MAX7219 Display';
     static category = 'display';
     static description = '8-digit LED driver on a firmware bit-banged DIN/CLK/LOAD bus or the hardware SPI2 master — 8×8 matrix or 7-segment view, daisy-chainable.';
@@ -150,6 +150,7 @@ export class Device {
             this.batchCount = 0;
             this.dmaChannel = null; // sticky GDMA channel (no PERI_SEL in the model)
             this.dmaLast = null;    // last fed chain's signature
+            this.dmaPend = null;    // signature awaiting a second poll (torn-read gate)
             this.dmaFeeds = 0;
             ctx.armSampling(HW_ARM_BATCH);
             return;
@@ -169,6 +170,7 @@ export class Device {
             this.wiring = null;
             this.dmaChannel = null;
             this.dmaLast = null;
+            this.dmaPend = null;
             this.dmaFeeds = 0;
             this.ctx.armSampling(HW_ARM_BATCH);
         } else {
@@ -212,16 +214,30 @@ export class Device {
             if (walked && isDmaFrame(walked.bytes)) {
                 if (walked.channel !== undefined) this.dmaChannel = walked.channel;
                 const sig = `${walked.bytes.length}:${Array.from(walked.bytes).join(',')}`;
-                // dedupe only the IMMEDIATELY PREVIOUS chain: a descriptor the
-                // hal left readable between polls must not feed twice, but
-                // returning to EARLIER content (a score that repeats, a blank
-                // between states) is a real transaction and must land — a
-                // global signature set silently dropped those (duel_of_8 game
-                // rounds re-show old glyphs)
-                if (sig !== this.dmaLast) {
+                if (sig === this.dmaLast) {
+                    // same chain as the previous poll: nothing new
+                    this.dmaPend = null;
+                } else if (sig === this.dmaPend) {
+                    // dedupe only the IMMEDIATELY PREVIOUS chain (a descriptor
+                    // the hal left readable between polls), and CONFIRM on two
+                    // consecutive polls: during a heal burst the CPU rewrites
+                    // the 2-byte DMA buffer per transaction, and a poll landing
+                    // between the two stores reads a torn [old reg, new byte]
+                    // frame — an impossible register write that lived for a
+                    // few instructions (measured on duel_of_8: intensity=7 and
+                    // scan-limit=0 ghosts, 3-5 per ~2000 heals). Real
+                    // transactions last hundreds of batches (16 bits @ 100 kHz
+                    // ≈ 427 fine batches), so the two-sample rule keeps every
+                    // real frame and drops every torn one. Returning to
+                    // EARLIER content (a repeating score, the standby screen
+                    // after settle) still latches — only consecutive repeats
+                    // dedupe.
                     this.dmaLast = sig;
+                    this.dmaPend = null;
                     this.dmaFeeds++;
                     this._onHwTransfer(walked.bytes);
+                } else {
+                    this.dmaPend = sig; // first sighting — wait for a witness
                 }
             }
             if (++this.batchCount % HW_RESCAN_BATCHES === 0) {
