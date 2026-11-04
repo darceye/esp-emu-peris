@@ -68,6 +68,15 @@ esp-emulator wasm 能力边界见 `docs/EMU-API.zh-cn.md` 与 `docs/FEASIBILITY.
   按值扫描发现,无硬编码偏移)。探针:`tests/m5_probe.mjs`、
   `m5_mem_probe.mjs`、`m5_wasm_static.mjs`;固件 P5 阶段;详见
   FEASIBILITY.zh-cn.md M5。
+- **S3 的寄存器级支持同样实测过(0.14.0,冒烟 S17 用 duel_of_8 0.3.0)**:
+  S3 上 SPI2/GPIO/LEDC/RMT/GDMA 全部可读。按芯片的差异都放在 mmio 表里
+  (`src/core/mmio/{c3,s3}.ts`)——绝不许把 C3 的事实硬编码到别的芯片上:
+  S3 的 OUT_SEL 是 9 位(0x100=普通 GPIO)、LEDC DUTY 在 [18:0] 位
+  (`dutyShift`)、RMT_STATE 在 [24:22] 位(`rmt.stateShift`)、4 个 RMT TX
+  通道、RMTMEM 在 base+0x800、GDMA 5 通道且 OUT_LINK 在 +0x80+0xC0·n、
+  FSPI 信号 101..115。用 `SPI_DMA_CH_AUTO` 的固件根本不碰 W0..W15——
+  max7219 hwspi 轮询 GDMA 链并按帧形状把关(同通道上其他设备的 DMA 被忽略
+  而非计入 dropped)。
 - **RMT 通道 RAM(WS2812,M3 实测)**:copy encoder **每个 WS2812 位写一个
   RMT 字**;字写到 48 后回绕;发送结束后 RAM 里只有复位符号、一个全零终止字
   和**最后 46 位**——解码帧尾,以复位符号(低 ≥30µs)重同步并前置补零对齐

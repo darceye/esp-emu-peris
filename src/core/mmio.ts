@@ -5,11 +5,13 @@
  */
 import type { ChipMmio } from './mmio/c3.js';
 import { esp32c3 } from './mmio/c3.js';
+import { esp32s3 } from './mmio/s3.js';
 
 export type { ChipMmio };
 
 const MAPS: Record<string, ChipMmio> = {
     esp32c3,
+    esp32s3,
 };
 
 export function mmioFor(chip: string): ChipMmio | null {

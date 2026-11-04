@@ -65,7 +65,10 @@ export function discoverSpiWiring(ctx) {
     const out = { sclk: null, mosi: null, miso: null, cs: [] };
     for (let pin = 0; pin < ctx.gpioCount; pin++) {
         const sel = ctx.readU32(funcOutSelBase + funcOutSelStride * pin);
-        const role = want.get(sel & 0xff); // C3: 8-bit field (M5; 0x80 = plain GPIO)
+        // 9-bit OUT_SEL field covers every tabled chip (C3's 8-bit field and
+        // plain-GPIO value 0x80 never collide with the S3-class 0x100/9-bit
+        // routing values) — same mask as ledc-lib/ws2812-lib, one semantic
+        const role = want.get(sel & 0x1ff);
         if (role === undefined) continue;
         if (role.startsWith('cs')) out.cs.push(pin);
         else out[role] = pin;

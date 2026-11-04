@@ -798,6 +798,65 @@ if (existsSync(GUN_FW)) {
     console.log('SKIP  S12 (gun 0.1.0 firmware not present on this machine)');
 }
 
+// ---- S17: hardware-SPI MAX7219 (DMA) against real-world firmware ----------
+//
+// The duel_of_8 0.3.0 release (ESP32-S3) drives its 7-segment display over
+// the hardware SPI2 master initialized with SPI_DMA_CH_AUTO (MOSI=21,
+// SCLK=13, CS=14 via the GPIO matrix) — pads invisible (M5), payload in the
+// GDMA descriptor chain. Boot expectations: display_init writes no-decode
+// (raw glyphs), scan-limit 7, then frame pushes with the 25 ms heal. This
+// exercises the S3 mmio table + the max7219 DMA capture path end to end.
+// Machine-local like S12; set DUEL8_FW to override.
+const DUEL8_FW = process.env.DUEL8_FW || 'D:/d3/_git/esp_proj/gun_flag_monster/duel_of_8/build/duel_of_8-0.3.0-merged.bin';
+if (existsSync(DUEL8_FW)) {
+    const emu3 = new WasmEmulator('esp32s3');
+    if (emu3.has_default_rom()) emu3.load_default_rom();
+    emu3.set_boot_from_rom(true);
+    emu3.load_firmware(new Uint8Array(readFileSync(DUEL8_FW)));
+    const msgs3 = [];
+    const rt3 = new PerisRuntime();
+    rt3.post = (m) => msgs3.push(m);
+    rt3.registry = registry;
+    rt3.attachEmu(emu3, 'esp32s3');
+    await rt3.applyConfig({
+        perisVersion: 1,
+        devices: [{ id: 'mx-3', type: 'max7219', bus: 'hwspi', chain: 1, pos: 0, name: 'Duel display' }],
+    });
+    const mx3States = () => msgs3.filter((m) => m.type === 'peris_state' && m.id === 'mx-3').map((m) => m.state);
+    const last3 = () => {
+        const ss = mx3States();
+        return ss.length ? ss[ss.length - 1] : null;
+    };
+    const run3 = (n, done) => {
+        for (let i = 0; i < n; i++) {
+            emu3.run_batch(rt3.batchSize(50000));
+            rt3.onBatchEnd();
+            if (i % 200 === 0) {
+                rt3.flushStates(true);
+                if (done(last3())) return true;
+            }
+        }
+        rt3.flushStates(true);
+        return done(last3());
+    };
+    const booted = run3(400000, (st) => st && st.scanLimit === 7 && st.shutdown === false && st.dmaFeeds >= 3);
+    const st = last3();
+    if (process.env.VERBOSE) {
+        console.log('DEBUG S17 final state:', JSON.stringify(st));
+    }
+    check('S17 duel_of_8 0.3.0: S3 wiring auto-discovered (MOSI 21 / SCLK 13)',
+        st?.wiring?.mosi === 21 && st?.wiring?.sclk === 13,
+        `wiring=${JSON.stringify(st?.wiring)}`);
+    check('S17 duel_of_8 0.3.0: DMA init decoded (no-decode, scan 8, running)',
+        booted && st?.decodeMode === 0x00 && st?.scanLimit === 7 && st?.shutdown === false,
+        `dmaFeeds=${st?.dmaFeeds} frames=${st?.frames} dropped=${st?.dropped}`);
+    check('S17 duel_of_8 0.3.0: frame pushes observed (heal traffic)',
+        st != null && st.frames >= 3 && st.dropped === 0,
+        `frames=${st?.frames} digits=${JSON.stringify(st?.digits?.map((d) => d.toString(16)))}`);
+} else {
+    console.log('SKIP  S17 (duel_of_8 0.3.0 firmware not present on this machine)');
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(failed.length ? `\n${failed.length} FAILED` : '\nALL PASS');
 process.exit(failed.length ? 1 : 0);

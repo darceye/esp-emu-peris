@@ -8,6 +8,49 @@ CHANGELOG.zh-cn.md).
 Rules: major = breaking protocol/architecture change; minor = new capability;
 patch = fixes and small changes.
 
+## peris 0.14.0
+
+- **ESP32-S3 register-level support** (`src/core/mmio/s3.ts`, new table):
+  every register-level device (PWM LED, WS2812/RMT, hwspi MAX7219,
+  ILI9341) now has addresses for S3, not only C3. Addresses from ESP-IDF
+  soc headers and verified live against the running wasm emulator
+  (wiring auto-discovery, LEDC duty decode path, SPI2 + GDMA) with the
+  duel_of_8 0.3.0 release — smoke S17. S3 differences encoded in the
+  table: LEDC DUTY fields at bits [18:0] (dutyShift 0), RMT RMT_STATE at
+  bits [24:22] (new `rmt.stateShift`, consumed by `rmtTxBusy`), 4 RMT TX
+  channels, RMTMEM at base+0x800, 5 GDMA channels with OUT_LINK at
+  base+0x80+0xC0·n, FSPI matrix signals 101..105/110..115. The SPI
+  wiring scan's OUT_SEL mask unified to 0x1ff (9-bit S3 field; C3's
+  8-bit values never collide) — same mask as the LEDC/RMT scans.
+- **MAX7219 hwspi DMA capture** (`max7219.js` v1.2.0): firmware that
+  initializes SPI2 with `SPI_DMA_CH_AUTO` (the spi_master default
+  request, e.g. duel_of_8) never touches W0..W15 — its payload rides the
+  GDMA out-descriptor chain. The device now polls the chain every armed
+  batch, gates chains by MAX7219 frame shape (1..8 whole 16-bit words
+  with register bytes 0x01..0x0F — other devices' DMA on the same
+  channels is ignored silently) and feeds the same latch model as the
+  no-DMA W window. Identical repeat frames are content-deduped (the
+  latch state would not change); `dmaFeeds` counts accepted chains and
+  the caption shows them. This is what made duel_of_8's 7-segment
+  display (blank before) render.
+- Tests: `tests/unit/spi.test.mjs` (+3: S3 wiring scan with the 9-bit
+  plain-GPIO value, per-chip RMT state shift, the DMA feed/dedupe/shape
+  gate) and smoke S17 (machine-local, duel_of_8 0.3.0 on S3: wiring
+  MOSI 21/SCLK 13 discovered, DMA init decoded, heal frames zero-drop).
+
+| device | version |
+|---|---|
+| led | 1.1.1 |
+| button / touch-button / toggle-switch | 1.1.0 |
+| pwm-led / rgb-led | 1.0.0 |
+| ws2812 | 1.0.0 |
+| bitbang-i2c-slave | 1.0.0 |
+| ir-nec | 1.0.0 |
+| max7219 | 1.2.0 |
+| ili9341 | 1.0.0 |
+| bitbang-i2s-audio | 1.0.0 |
+| logic-analyzer | 1.1.0 |
+
 ## peris 0.13.0
 
 - **Bit-bang I2S audio codec** (M6 — see the evidence chain in

@@ -13,6 +13,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { esp32c3 as C3_MMIO } from '../../build/core/mmio/c3.js';
+import { esp32s3 as S3_MMIO } from '../../build/core/mmio/s3.js';
+import { mmioFor } from '../../build/core/mmio.js';
+import { rmtTxBusy } from '../../peris/devices/ws2812-lib.js';
 import * as spiLib from '../../peris/devices/spi-lib.js';
 import * as lcdLib from '../../peris/devices/ili9341-lib.js';
 import * as mx from '../../peris/devices/max7219.js';
@@ -100,6 +103,34 @@ test('spi-lib: wiring discovery scans FUNC_OUT_SEL (0x80 = plain GPIO)', () => {
     regs.set(F(10), 0x80);      // plain GPIO — not SPI
     const w = spiLib.discoverSpiWiring(ctx);
     assert.deepEqual(w, { sclk: 11, mosi: 12, miso: 13, cs: [14] });
+});
+
+test('spi-lib: S3 table registered; wiring scan handles the 9-bit field', () => {
+    assert.equal(mmioFor('esp32s3'), S3_MMIO);
+    assert.equal(mmioFor('esp32c3'), C3_MMIO);
+    const { regs, ctx } = makeSpiCtx();
+    ctx.mmio = S3_MMIO;
+    ctx.chip = 'esp32s3';
+    ctx.gpioCount = 49;
+    const F = (pin) => S3_MMIO.gpio.funcOutSelBase + 4 * pin;
+    regs.set(F(13), 101);       // FSPICLK
+    regs.set(F(21), 103);       // FSPID (MOSI) — duel_of_8 wiring
+    regs.set(F(14), 110);       // FSPICS0
+    regs.set(F(8), 0x100);      // S3 plain GPIO (9-bit field) — not SPI
+    regs.set(F(9), 73);         // S3 LEDC ch0 — not SPI
+    const w = spiLib.discoverSpiWiring(ctx);
+    assert.deepEqual(w, { sclk: 13, mosi: 21, miso: null, cs: [14] });
+});
+
+test('mmio: RMT TX-busy uses the per-chip state shift', () => {
+    const mk = (mmio, status) => ({
+        readU32: () => status,
+        mmio,
+    });
+    assert.equal(rmtTxBusy(mk(C3_MMIO, 1 << 9), 0), true, 'C3 state lives at bits[11:9]');
+    assert.equal(rmtTxBusy(mk(C3_MMIO, 0), 0), false);
+    assert.equal(rmtTxBusy(mk(S3_MMIO, 1 << 22), 0), true, 'S3 state lives at bits[24:22]');
+    assert.equal(rmtTxBusy(mk(S3_MMIO, 1 << 9), 0), false, 'the C3 position is other bits on S3');
 });
 
 test('spi-lib: wordsToBytes unpacks byte i at bits [8i+7:8i]', () => {
@@ -301,5 +332,35 @@ test('max7219: hwspi replays the P6 register-write sequence into the model', () 
     assert.equal(st.test, false, 'the trailing test-off frame must land');
     assert.ok(st.transfers >= writes.length - 1, 'every write decoded (the trailing one may flush on timeout)');
     assert.equal(st.dropped, 0);
+    dev.destroy();
+});
+
+test('max7219: hwspi DMA feeds — dedupe identical, decode new content (S3)', () => {
+    // duel_of_8-style firmware: spi_bus_initialize(SPI_DMA_CH_AUTO) → the
+    // payload rides the GDMA chain, W0 never moves
+    const { regs, ctx } = makeSpiCtx();
+    ctx.mmio = S3_MMIO;
+    ctx.chip = 'esp32s3';
+    const dev = new mx.Device(ctx, { id: 't', type: 'max7219', bus: 'hwspi' });
+    const arm = (bytes) => {
+        putBuf(regs, 0x3fc88000, bytes);
+        putDesc(regs, 0x3fc90000, { len: bytes.length, buf: 0x3fc88000 });
+        regs.set(S3_MMIO.spi.gdma.outLink[0], 0x90000);
+        dev.onBatch();
+    };
+    arm([0x0b, 0x07]);          // scan limit 7
+    arm([0x09, 0xff]);          // decode mode
+    arm([0x09, 0xff]);          // periodic heal: identical frame → deduped
+    arm([0x0c, 0x01]);          // shutdown off
+    arm([0x01, 0x7f]);          // digit 1
+    const st = dev.getState();
+    assert.equal(st.scanLimit, 7);
+    assert.equal(st.decodeMode, 0xff);
+    assert.equal(st.shutdown, false);
+    assert.equal(st.digits[0], 0x7f);
+    assert.equal(st.dmaFeeds, 4, 'the identical repeat fed once, not twice');
+    assert.equal(st.transfers, 0, 'no-DMA W window stays idle');
+    assert.equal(st.dropped, 0);
+    assert.equal(dev.dmaChannel, 0, 'the GDMA channel went sticky');
     dev.destroy();
 });

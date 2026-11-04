@@ -83,6 +83,16 @@ matrix, wasm vs native Linux builds: `docs/EMU-PERIPHERALS.md`.
   `WebAssembly.Instance` around `initSync()`; struct found by value scan,
   no hardcoded offsets). Probes: `tests/m5_probe.mjs`, `m5_mem_probe.mjs`,
   `m5_wasm_static.mjs`; firmware P5 phase; details: FEASIBILITY.md M5.
+- **S3 register-level support is measured too (0.14.0, smoke S17 with
+  duel_of_8 0.3.0)**: SPI2/GPIO/LEDC/RMT/GDMA all readable on S3. Per-chip
+  differences live in the mmio tables (`src/core/mmio/{c3,s3}.ts`) — never
+  hardcode a C3 fact for another chip: OUT_SEL is 9 bits on S3 (0x100 =
+  plain GPIO), LEDC DUTY at bits[18:0] (`dutyShift`), RMT_STATE at
+  bits[24:22] (`rmt.stateShift`), 4 RMT TX channels, RMTMEM at base+0x800,
+  GDMA 5 channels with OUT_LINK at +0x80+0xC0·n, FSPI signals 101..115.
+  Firmware using `SPI_DMA_CH_AUTO` never touches W0..W15 — max7219 hwspi
+  polls the GDMA chain with a frame-shape gate (other devices' DMA on the
+  same channels is ignored, not dropped).
 - **RMT channel RAM (WS2812, M3-measured)**: the copy encoder writes **one
   RMT word per WS2812 bit**; words wrap every 48; after a transmission the
   RAM holds the reset symbol, one all-zero terminator word and **only the

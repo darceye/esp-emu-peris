@@ -48,15 +48,17 @@ export function readRmtWords(ctx, ch) {
 }
 
 /**
- * Is the channel's TX state machine running? CHnSTATUS bits[11:9] ≠ 0 while
- * a transmission is in flight (measured: 1 = sending). Skipping the decode
- * while busy avoids latching half-overwritten RAM windows. On an emulator
- * build without STATUS the read yields 0 → never busy → decode degrades to
- * "latest snapshot wins" (a wrong frame self-corrects one batch later).
+ * Is the channel's TX state machine running? RMT_STATE ≠ 0 in CHnSTATUS
+ * while a transmission is in flight (measured: 1 = sending; C3 bits[11:9],
+ * S3 bits[24:22] — per-chip rmt.stateShift in the mmio table). Skipping the
+ * decode while busy avoids latching half-overwritten RAM windows. On an
+ * emulator build without STATUS the read yields 0 → never busy → decode
+ * degrades to "latest snapshot wins" (a wrong frame self-corrects one batch
+ * later).
  */
 export function rmtTxBusy(ctx, ch) {
     const status = ctx.readU32(ctx.mmio.rmt.ch(ch).status);
-    return ((status >>> 9) & 7) !== 0;
+    return ((status >>> ctx.mmio.rmt.stateShift) & 7) !== 0;
 }
 
 /* ---- wiring discovery (GPIO matrix) ---------------------------------------- */

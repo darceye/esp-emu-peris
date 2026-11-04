@@ -6,6 +6,44 @@
 与英文版 CHANGELOG.md)。
 规则:主版本=协议/架构破坏性变更;次版本=新能力;修订=修复与小改。
 
+## peris 0.14.0
+
+- **ESP32-S3 寄存器级支持**(`src/core/mmio/s3.ts`,新表):所有寄存器级设备
+  (PWM LED、WS2812/RMT、hwspi MAX7219、ILI9341)现在有 S3 的地址,不再只有
+  C3。地址取自 ESP-IDF soc 头文件,并用 duel_of_8 0.3.0 发布固件在运行中的
+  wasm 模拟器上实测验证(接线自动发现、LEDC 占空比解码路径、SPI2 + GDMA)——
+  冒烟 S17。表内编码的 S3 差异:LEDC DUTY 字段在 [18:0] 位(dutyShift 0)、
+  RMT 的 RMT_STATE 在 [24:22] 位(新增 `rmt.stateShift`,`rmtTxBusy` 消费)、
+  4 个 RMT TX 通道、RMTMEM 在 base+0x800、5 个 GDMA 通道且 OUT_LINK 在
+  base+0x80+0xC0·n、FSPI 矩阵信号 101..105/110..115。SPI 接线扫描的
+  OUT_SEL 掩码统一为 0x1ff(S3 的 9 位字段;C3 的 8 位值永不冲突)——与
+  LEDC/RMT 扫描同一掩码。
+- **MAX7219 hwspi DMA 捕获**(`max7219.js` v1.2.0):以 `SPI_DMA_CH_AUTO`
+  初始化 SPI2 的固件(spi_master 的默认请求,如 duel_of_8)根本不碰
+  W0..W15——payload 走 GDMA 输出描述符链。设备现在每个武装批次轮询描述符
+  链,按 MAX7219 帧形状把关(1..8 个完整 16 位字且寄存器字节 0x01..0x0F——
+  同通道上其他设备的 DMA 被静默忽略),送入与无 DMA W 窗口完全相同的锁存
+  模型。完全相同的重复帧按内容去重(锁存状态本就不会变);`dmaFeeds` 计数
+  已接受的链,caption 一并显示。正是它让 duel_of_8 的七段数码管(此前空白)
+  显示出来。
+- 测试:`tests/unit/spi.test.mjs`(+3:S3 接线扫描含 9 位 plain-GPIO 值、
+  按芯片的 RMT 状态移位、DMA 喂入/去重/形状把关)与冒烟 S17(机器本地,
+  S3 上的 duel_of_8 0.3.0:发现接线 MOSI 21/SCLK 13、解码 DMA 初始化、
+  自愈帧零丢失)。
+
+| device | version |
+|---|---|
+| led | 1.1.1 |
+| button / touch-button / toggle-switch | 1.1.0 |
+| pwm-led / rgb-led | 1.0.0 |
+| ws2812 | 1.0.0 |
+| bitbang-i2c-slave | 1.0.0 |
+| ir-nec | 1.0.0 |
+| max7219 | 1.2.0 |
+| ili9341 | 1.0.0 |
+| bitbang-i2s-audio | 1.0.0 |
+| logic-analyzer | 1.1.0 |
+
 ## peris 0.13.0
 
 - **位捆绑 I2S 音频编解码器**(M6——证据链见 docs/FEASIBILITY.zh-cn.md):

@@ -44,7 +44,7 @@ import {
     Max7219Model, Max7219Wire, pickChainWord, displayFromSnapshot,
     drawDisplay, drawSeg7, displayLevel, displayGeometry, MX_COLOR,
 } from './max7219-lib.js';
-import { SpiWindowEngine, discoverSpiWiring } from './spi-lib.js';
+import { SpiWindowEngine, discoverSpiWiring, readDmaPayload } from './spi-lib.js';
 import { makeCanvas } from './ws2812-lib.js';
 
 /** Standing watch batch (instructions) while the bus is idle — below the
@@ -81,9 +81,14 @@ const posFrom = (v, chain) => {
     return Number.isInteger(n) ? Math.min(chain - 1, Math.max(0, n)) : 0;
 };
 
+/** A GDMA chain is MAX7219 traffic iff it is 1..8 whole 16-bit words and
+ * every word's high byte is a register address 0x01..0x0F. */
+const isDmaFrame = (b) => b.length >= 2 && b.length <= 16 && b.length % 2 === 0
+    && b.every((v, i) => i % 2 === 1 || (v >= 0x01 && v <= 0x0f));
+
 export class Device {
     static typeId = 'max7219';
-    static version = '1.1.0';
+    static version = '1.2.0';
     static title = 'MAX7219 Display';
     static category = 'display';
     static description = '8-digit LED driver on a firmware bit-banged DIN/CLK/LOAD bus or the hardware SPI2 master — 8×8 matrix or 7-segment view, daisy-chainable.';
@@ -130,10 +135,16 @@ export class Device {
         this.dropped = 0;  // misaligned frames — edges/transfers lost to sampling
         if (this.bus === 'hwspi') {
             /* register-level listener: no pad claims, no pin subscription —
-             * the W window is watched every armed batch (M5, spi-lib). */
+             * the W window is watched every armed batch (M5, spi-lib), and
+             * DMA transactions are recovered from the GDMA descriptor chain
+             * (spi_bus_initialize(..., SPI_DMA_CH_AUTO) bypasses W entirely;
+             * verified live with duel_of_8 0.3.0 on S3 — tests/m7_smoke.mjs). */
             this.window = new SpiWindowEngine(ctx, (bytes) => this._onHwTransfer(bytes));
             this.wiring = null;
             this.batchCount = 0;
+            this.dmaChannel = null; // sticky GDMA channel (no PERI_SEL in the model)
+            this.dmaSig = new Set(); // content signatures already fed
+            this.dmaFeeds = 0;
             ctx.armSampling(HW_ARM_BATCH);
             return;
         }
@@ -150,6 +161,9 @@ export class Device {
         if (this.bus === 'hwspi') {
             this.window.reset();
             this.wiring = null;
+            this.dmaChannel = null;
+            this.dmaSig = new Set();
+            this.dmaFeeds = 0;
             this.ctx.armSampling(HW_ARM_BATCH);
         } else {
             this.wire.reset();
@@ -174,6 +188,30 @@ export class Device {
     onBatch() {
         if (this.bus === 'hwspi') {
             this.window.sample();
+            /* DMA firmware (spi_master with a dma channel): the payload lives
+             * in the GDMA out-descriptor chain, which stays readable after
+             * completion. MAX7219 frames are ≤16 bytes, so the whole frame
+             * arrives in one walk; the content signature stops re-reads of a
+             * descriptor the hal left armed/cleared between polls. A repeat
+             * write of an IDENTICAL frame is deduped away — the latch state
+             * would not change, so nothing is lost visually.
+             *
+             * Shape gate first: the GDMA has no PERI_SEL in the model, so
+             * OTHER devices' DMA rides the same channels (measured: the probe
+             * firmware's ILI9341 pixel chunks). A chain is MAX7219 traffic
+             * only when every 16-bit word carries a register address byte in
+             * 0x01..0x0F — anything else is ignored silently (not `dropped`,
+             * it was never ours). */
+            const walked = readDmaPayload(this.ctx, this.dmaChannel);
+            if (walked && isDmaFrame(walked.bytes)) {
+                if (walked.channel !== undefined) this.dmaChannel = walked.channel;
+                const sig = `${walked.bytes.length}:${Array.from(walked.bytes).join(',')}`;
+                if (!this.dmaSig.has(sig)) {
+                    this.dmaSig.add(sig);
+                    this.dmaFeeds++;
+                    this._onHwTransfer(walked.bytes);
+                }
+            }
             if (++this.batchCount % HW_RESCAN_BATCHES === 0) {
                 const w = discoverSpiWiring(this.ctx);
                 if (JSON.stringify(w) !== JSON.stringify(this.wiring)) {
@@ -206,6 +244,7 @@ export class Device {
         };
         if (this.bus === 'hwspi') {
             st.transfers = this.window.transfers;
+            st.dmaFeeds = this.dmaFeeds;
             st.wiring = this.wiring;
         } else {
             st.din = this.din; st.clk = this.clk; st.load = this.load;
@@ -305,7 +344,8 @@ export class View {
                 ? ` · MOSI GPIO${state.wiring.mosi} · SCLK GPIO${state.wiring.sclk}` : ''}`
             : `DIN GPIO${state.din} · CLK GPIO${state.clk} · LOAD GPIO${state.load}`)
             + (state.chain > 1 ? ` · chain ${state.pos + 1}/${state.chain}` : '')
-            + ` · ${state.frames} frames` + (state.dropped ? ` · ${state.dropped} dropped` : '')
+            + ` · ${state.frames} frames` + (state.dmaFeeds ? ` · ${state.dmaFeeds} DMA` : '')
+            + (state.dropped ? ` · ${state.dropped} dropped` : '')
             + (state.shutdown ? ' · shutdown' : '')
             + (state.test ? ' · display test' : '');
     }

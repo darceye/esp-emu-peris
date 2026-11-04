@@ -22,8 +22,10 @@ export interface ChipMmio {
         /** Channels with a GPIO-matrix output signal (C3: 2 TX channels). */
         txChannelCount: number;
         memBase: number; memWordsPerChannel: number; chStride: number;
-        /** Per-channel registers: mem = RMTMEM block start, status = CHnSTATUS
-         * (bits[11:9] = channel state machine, nonzero while transmitting). */
+        /** RMT_STATE shift in CHnSTATUS (bits[11:9] on C3; [24:22] on S3) —
+         * nonzero while transmitting. */
+        stateShift: number;
+        /** Per-channel registers: mem = RMTMEM block start, status = CHnSTATUS. */
         ch: (n: number) => { mem: number; status: number };
     };
     /** GPIO-matrix signal ids observed on this chip (M0 + IDF gpio_sig_map.h). */
@@ -88,7 +90,7 @@ export const esp32c3: ChipMmio = {
         memBase: 0x60016400, // RMTMEM; ch n at memBase + 0xC0*n
         memWordsPerChannel: 48,
         chStride: 0xc0,
-        // CHnSTATUS at base + 0x28 + 4n; RMT_STATE bits[11:9] (1 = sending)
+        stateShift: 9, // CHnSTATUS at base + 0x28 + 4n; RMT_STATE bits[11:9]
         ch: (n: number) => ({ mem: 0x60016400 + 0xc0 * n, status: 0x60016000 + 0x28 + 4 * n }),
     },
     signals: {
