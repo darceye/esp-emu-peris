@@ -88,12 +88,13 @@ const isDmaFrame = (b) => b.length >= 2 && b.length <= 16 && b.length % 2 === 0
 
 export class Device {
     static typeId = 'max7219';
-    static version = '1.2.0';
+    static version = '1.3.0';
     static title = 'MAX7219 Display';
     static category = 'display';
     static description = '8-digit LED driver on a firmware bit-banged DIN/CLK/LOAD bus or the hardware SPI2 master — 8×8 matrix or 7-segment view, daisy-chainable.';
     static defaultConfig = {
         name: 'MAX7219', bus: 'bitbang', din: 21, clk: 13, load: 14, chain: 1, pos: 0, mode: 'auto',
+        segDecode: 'auto',
     };
     /* DIN/CLK/LOAD are a bus: daisy-chained parts legally share all three.
      * (hwspi mode claims nothing — pins() returns [].) */
@@ -116,6 +117,11 @@ export class Device {
             { value: 'auto', label: 'Auto (decode-mode register)' },
             { value: 'matrix', label: '8×8 matrix' },
             { value: 'seg7', label: '7-segment digits' },
+        ] },
+        { key: 'segDecode', label: 'Digit decode', type: 'select', options: [
+            { value: 'auto', label: 'Auto (decode-mode register)' },
+            { value: 'bcd', label: 'Always Code B (BCD)' },
+            { value: 'raw', label: 'Never decode (raw segment bits)' },
         ] },
         { key: 'name', label: 'Label', type: 'text' },
     ];
@@ -291,7 +297,7 @@ export class View {
     constructor(el, sendCmd) {
         this.el = el;
         this.send = sendCmd;
-        this.cfg = { mode: 'auto', chain: 1, pos: 0 };
+        this.cfg = { mode: 'auto', segDecode: 'auto', chain: 1, pos: 0 };
         this.state = null;
         el.className = 'dev-body mx-body';
 
@@ -336,7 +342,7 @@ export class View {
             ? (state.decodeMode ? 'seg7' : 'matrix')
             : this.cfg.mode;
         if (mode !== this.mode) this._rebuild(mode);
-        const { segs, brightness } = displayFromSnapshot(state);
+        const { segs, brightness } = displayFromSnapshot(state, this.cfg.segDecode);
         if (this.g) drawDisplay(this.g, this.geo, this.mode, segs, brightness);
         if (this.iconG) this._applyIcon(this.mode, segs, brightness);
         this.cap.textContent = (state.bus === 'hwspi'
@@ -380,6 +386,7 @@ export class View {
     setConfig(cfg) {
         this.cfg = {
             mode: ['auto', 'matrix', 'seg7'].includes(cfg.mode) ? cfg.mode : 'auto',
+            segDecode: ['auto', 'bcd', 'raw'].includes(cfg.segDecode) ? cfg.segDecode : 'auto',
             chain: chainFrom(cfg.chain),
             pos: posFrom(cfg.pos, chainFrom(cfg.chain)),
         };

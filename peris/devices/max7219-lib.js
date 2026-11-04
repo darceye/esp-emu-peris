@@ -123,12 +123,10 @@ export class Max7219Model {
         }
     }
 
-    /** Effective segment byte of one digit: Code B decode applied (D7=DP
-     * independent), or the raw byte in no-decode mode. */
+    /** Effective segment byte of one digit — one semantic, shared with the
+     * render path via decodeDigitByte (see there). */
     digitSegments(d) {
-        const raw = this.digits[d] & 0xff;
-        if ((this.decodeMode >> d) & 1) return (CODE_B[raw & 0x0f]) | (raw & SEG.DP);
-        return raw;
+        return decodeDigitByte(this.digits[d] & 0xff, this.decodeMode, d);
     }
 
     /** Average segment current duty for the intensity register (1/32…31/32). */
@@ -151,20 +149,34 @@ export function pickChainWord(words, chain, pos) {
 }
 
 /**
+ * One digit byte → segment byte, under a decode choice:
+ *   'auto' — the hardware rule (decode-mode register, per digit bit d)
+ *   'bcd'  — always Code B (D7=DP passes through independently)
+ *   'raw'  — never decode: the byte IS the segment pattern
+ * The model's own state view uses 'auto' (what the real chip drives); the
+ * user may override the *view* (max7219.js cfg.segDecode) — e.g. firmware
+ * sends BCD codes with no-decode set, or raw glyphs with decode set.
+ */
+export function decodeDigitByte(raw, decodeMode, d, choice = 'auto') {
+    const bcd = choice === 'bcd' || (choice !== 'raw' && ((decodeMode >> d) & 1) === 1);
+    return bcd ? (CODE_B[raw & 0x0f] | (raw & SEG.DP)) : raw;
+}
+
+/**
  * Effective per-digit segment bytes for rendering, from a plain state
  * snapshot (the Device's getState output — pure function, shared by the View
  * and the unit tests): display test lights every segment, shutdown blanks,
- * digits beyond the scan limit are dark, Code B decode is applied. Returns
+ * digits beyond the scan limit are dark, Code B decode is applied (the
+ * decode choice is 'auto' unless overridden — see decodeDigitByte). Returns
  * { segs: number[8], brightness }.
  */
-export function displayFromSnapshot(st) {
+export function displayFromSnapshot(st, decode = 'auto') {
     const segs = new Array(8).fill(0);
     const scan = Math.min(7, Math.max(0, st.scanLimit | 0));
     for (let d = 0; d < 8; d++) {
         if (st.test) segs[d] = 0xff;
         else if (!st.shutdown && d <= scan) {
-            const raw = (st.digits?.[d] ?? 0) & 0xff;
-            segs[d] = (st.decodeMode >> d) & 1 ? (CODE_B[raw & 0x0f] | (raw & SEG.DP)) : raw;
+            segs[d] = decodeDigitByte((st.digits?.[d] ?? 0) & 0xff, st.decodeMode, d, decode);
         }
     }
     return { segs, brightness: Math.min(15, Math.max(0, st.intensity | 0)) };

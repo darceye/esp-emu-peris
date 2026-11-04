@@ -626,6 +626,27 @@ test('max7219: display derivation (decode, scan limit, shutdown, test)', () => {
     assert.deepEqual(v.segs, new Array(8).fill(0xff), 'display test lights everything');
 });
 
+test('max7219: view decode override (Code B / raw) beats the register', () => {
+    const st = { digits: new Array(8).fill(0), decodeMode: 0, scanLimit: 7, shutdown: false, test: false, intensity: 3 };
+    st.digits[0] = 0x05; st.digits[1] = 0x8f; st.digits[2] = 0x25;
+    // decodeMode 0 (firmware sends raw glyphs) but the user forces Code B
+    let v = mxLib.displayFromSnapshot(st, 'bcd');
+    assert.equal(v.segs[0], mxLib.CODE_B[5], 'forced decode of a no-decode digit');
+    assert.equal(v.segs[1], mxLib.CODE_B[0xf] | 0x80, 'forced decode keeps DP independent');
+    // decode register ON but the user forces raw bits
+    st.decodeMode = 0xff;
+    v = mxLib.displayFromSnapshot(st, 'raw');
+    assert.equal(v.segs[0], 0x05, 'forced raw: byte is the segment pattern');
+    assert.equal(v.segs[2], 0x25);
+    // 'auto' stays the hardware rule (per-digit bit)
+    st.decodeMode = 0x04; // digit 2 only
+    v = mxLib.displayFromSnapshot(st, 'auto');
+    assert.equal(v.segs[0], 0x05);
+    assert.equal(v.segs[2], mxLib.CODE_B[5]);
+    assert.equal(mxLib.decodeDigitByte(0x85, 0, 0, 'bcd'), mxLib.CODE_B[5] | 0x80,
+        'DP (bit 7) passes through the forced decode');
+});
+
 test('max7219 wire: MSB-first shift, LOAD latch, misaligned frames dropped', () => {
     const got = [];
     const w = new mxLib.Max7219Wire((words, bits) => got.push({ words, bits }));

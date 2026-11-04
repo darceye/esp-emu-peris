@@ -6,6 +6,31 @@
 与英文版 CHANGELOG.md)。
 规则:主版本=协议/架构破坏性变更;次版本=新能力;修订=修复与小改。
 
+## peris 0.14.1
+
+- **MAX7219 视图译码覆盖**(`max7219.js` v1.3.0):新增配置 `segDecode`——
+  Auto(译码寄存器,硬件规则,默认)/ Always Code B / Never decode(原始段位)。
+  视图解释权交给用户,与模拟的译码寄存器无关:固件在 no-decode 下发 BCD 码
+  (或在译码下发原始字形)时,七段视图照样能读。一个共享助手
+  (`max7219-lib.js` 的 `decodeDigitByte`)同时服务模型自身的
+  `digitSegments` 与渲染路径(`displayFromSnapshot` 接收该选择;
+  AGENT.md §3.8——不写第二条渲染路径)。
+- 测试:`tests/unit/protocol.test.mjs` +1(双向覆盖译码寄存器、DP 保持
+  独立、'auto' 行为不变)。
+
+| device | version |
+|---|---|
+| led | 1.1.1 |
+| button / touch-button / toggle-switch | 1.1.0 |
+| pwm-led / rgb-led | 1.0.0 |
+| ws2812 | 1.0.0 |
+| bitbang-i2c-slave | 1.0.0 |
+| ir-nec | 1.0.0 |
+| max7219 | 1.3.0 |
+| ili9341 | 1.0.0 |
+| bitbang-i2s-audio | 1.0.0 |
+| logic-analyzer | 1.1.0 |
+
 ## peris 0.14.0
 
 - **ESP32-S3 寄存器级支持**(`src/core/mmio/s3.ts`,新表):所有寄存器级设备

@@ -8,6 +8,33 @@ CHANGELOG.zh-cn.md).
 Rules: major = breaking protocol/architecture change; minor = new capability;
 patch = fixes and small changes.
 
+## peris 0.14.1
+
+- **MAX7219 view decode override** (`max7219.js` v1.3.0): new config
+  `segDecode` — Auto (the decode-mode register, the hardware rule, the
+  default), Always Code B, or Never decode (raw segment bits). The view
+  interpretation is the user's call, independent of the emulated decode
+  register: firmware sending BCD codes with no-decode set (or raw glyphs
+  with decode set) can still be read in the 7-segment view. One shared
+  helper (`decodeDigitByte` in `max7219-lib.js`) serves the model's own
+  `digitSegments` and the render path (`displayFromSnapshot` takes the
+  choice; AGENT.md §3.8 — no second styling path).
+- Test: `tests/unit/protocol.test.mjs` +1 (override beats the register in
+  both directions, DP stays independent, 'auto' unchanged).
+
+| device | version |
+|---|---|
+| led | 1.1.1 |
+| button / touch-button / toggle-switch | 1.1.0 |
+| pwm-led / rgb-led | 1.0.0 |
+| ws2812 | 1.0.0 |
+| bitbang-i2c-slave | 1.0.0 |
+| ir-nec | 1.0.0 |
+| max7219 | 1.3.0 |
+| ili9341 | 1.0.0 |
+| bitbang-i2s-audio | 1.0.0 |
+| logic-analyzer | 1.1.0 |
+
 ## peris 0.14.0
 
 - **ESP32-S3 register-level support** (`src/core/mmio/s3.ts`, new table):
