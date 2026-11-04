@@ -647,6 +647,17 @@ test('max7219: view decode override (Code B / raw) beats the register', () => {
         'DP (bit 7) passes through the forced decode');
 });
 
+test('max7219: seg7 geometry fits all 8 digits inside the canvas', () => {
+    const geo = mxLib.displayGeometry('seg7', 240);
+    const lastX = geo.gap + 7 * (geo.dw + geo.gap + geo.dw * 0.2); // digit 7 x
+    assert.ok(lastX + geo.dw + geo.dw * 0.2 <= geo.w + 0.01,
+        `8th digit (right edge ${lastX + geo.dw}) must fit canvas w=${geo.w}`);
+    for (const maxW of [120, 240, 480]) {
+        const g2 = mxLib.displayGeometry('seg7', maxW);
+        assert.ok(g2.w <= maxW, `canvas w ${g2.w} within maxW ${maxW}`);
+    }
+});
+
 test('max7219 wire: MSB-first shift, LOAD latch, misaligned frames dropped', () => {
     const got = [];
     const w = new mxLib.Max7219Wire((words, bits) => got.push({ words, bits }));

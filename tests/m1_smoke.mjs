@@ -820,7 +820,12 @@ if (existsSync(DUEL8_FW)) {
     rt3.attachEmu(emu3, 'esp32s3');
     await rt3.applyConfig({
         perisVersion: 1,
-        devices: [{ id: 'mx-3', type: 'max7219', bus: 'hwspi', chain: 1, pos: 0, name: 'Duel display' }],
+        devices: [
+            { id: 'mx-3', type: 'max7219', bus: 'hwspi', chain: 1, pos: 0, name: 'Duel display' },
+            // the two IR pads (GPIO48/GPIO38, active-low, edge-counted ISRs)
+            { id: 'ir-l', type: 'button', pin: 48, activeLow: true, name: 'IR left' },
+            { id: 'ir-r', type: 'button', pin: 38, activeLow: true, name: 'IR right' },
+        ],
     });
     const mx3States = () => msgs3.filter((m) => m.type === 'peris_state' && m.id === 'mx-3').map((m) => m.state);
     const last3 = () => {
@@ -840,9 +845,9 @@ if (existsSync(DUEL8_FW)) {
         return done(last3());
     };
     const booted = run3(400000, (st) => st && st.scanLimit === 7 && st.shutdown === false && st.dmaFeeds >= 3);
-    const st = last3();
+    let st = last3();
     if (process.env.VERBOSE) {
-        console.log('DEBUG S17 final state:', JSON.stringify(st));
+        console.log('DEBUG S17 boot state:', JSON.stringify(st));
     }
     check('S17 duel_of_8 0.3.0: S3 wiring auto-discovered (MOSI 21 / SCLK 13)',
         st?.wiring?.mosi === 21 && st?.wiring?.sclk === 13,
@@ -853,6 +858,72 @@ if (existsSync(DUEL8_FW)) {
     check('S17 duel_of_8 0.3.0: frame pushes observed (heal traffic)',
         st != null && st.frames >= 3 && st.dropped === 0,
         `frames=${st?.frames} digits=${JSON.stringify(st?.digits?.map((d) => d.toString(16)))}`);
+
+    // ---- S17b: a full 5-round game, watched through the DMA screen feed ----
+    // digit layout (display.c, no mirror): [7]=round [6]=speed [5..4]=L total
+    // [3..2]=R total [1..0]=countdown; glyphs from max7219_char_to_segments.
+    // The game auto-arms at boot (the button devices' onEmuReady input
+    // re-drive raises the firmware's IR edge ISRs — AGENT §2), so the whole
+    // game runs unattended: 5 × (10 s round + 2 s hold + 2 s blackout) +
+    // settle, then standby. All rounds time out (no further pulses) with
+    // totals 0.
+    const G = { 0x7e: '0', 0x30: '1', 0x6d: '2', 0x79: '3', 0x33: '4', 0x5b: '5', 0x5f: '6', 0x70: '7', 0x7f: '8', 0x7b: '9', 0x01: '-' };
+    const txt = (s) => (s?.digits ?? []).map((d) => G[d] ?? '.').join('');
+    const screens = [];
+    const run3b = (n, done) => {
+        for (let i = 0; i < n; i++) {
+            emu3.run_batch(rt3.batchSize(50000));
+            rt3.onBatchEnd();
+            if (i % 200 === 0) {
+                rt3.flushStates(true);
+                const s = last3();
+                const t = txt(s);
+                if (screens[screens.length - 1] !== t) screens.push(t);
+                if (done(t)) return true;
+            }
+        }
+        rt3.flushStates(true);
+        return done(txt(last3()));
+    };
+    // fallback arm: if the boot edges did not start the game, pulse both pads
+    const armed = run3b(3000000, (t) => t[7] === '1' && t[0] === '1');
+    if (!armed) {
+        let hold = 0;
+        for (let i = 0; i < 5000; i++) {
+            emu3.run_batch(rt3.batchSize(50000));
+            rt3.onBatchEnd();
+            if (i % 8 === 0 && hold === 0) {
+                rt3.command('ir-l', 'press'); rt3.command('ir-r', 'press');
+                hold = 3;
+            } else if (hold > 0 && --hold === 0) {
+                rt3.command('ir-l', 'release'); rt3.command('ir-r', 'release');
+            }
+        }
+    }
+    // rounds 1..5 at 10 s timeout each (~1.2 M leased batches per round),
+    // then the settle screen: '-' in round/speed/countdown, totals kept
+    const round5 = run3b(8000000, (t) => t[7] === '5');
+    const settled = run3b(12000000, (t) => t[7] === '-' && t[0] === '-' && t[6] === '-');
+    // settle → blackout → standby: the SAME screen as before the game — the
+    // return-to-earlier-content case the old global DMA dedupe dropped
+    // (standby txt: countdown "10", totals 00/00, speed 0, round 0)
+    const backStandby = run3b(4000000, (t) => t === '10000000');
+    st = last3();
+    if (process.env.VERBOSE) {
+        console.log('DEBUG S17b screens:', JSON.stringify(screens.slice(-28)));
+    }
+    check('S17b duel_of_8 0.3.0: round 1 started (round digit + countdown 10)',
+        screens.some((t) => t[7] === '1'), `screens=${JSON.stringify(screens.slice(0, 6))}`);
+    check('S17b duel_of_8 0.3.0: countdown ticks through a round (10→0x)',
+        screens.some((t) => t[7] >= '1' && t[7] <= '5' && t[0] === '0' && t[1] !== '.'),
+        `screens=${JSON.stringify(screens.slice(-24))}`);
+    check('S17b duel_of_8 0.3.0: all five rounds displayed',
+        round5, `screens=${JSON.stringify(screens.slice(-24))}`);
+    check('S17b duel_of_8 0.3.0: settle screen ("-") after the last round',
+        settled, `screens=${JSON.stringify(screens.slice(-24))}`);
+    check('S17b duel_of_8 0.3.0: back to standby (earlier content re-shown), zero drops',
+        backStandby && st?.dropped === 0,
+        `final=${txt(st)} frames=${st?.frames} dmaFeeds=${st?.dmaFeeds} dropped=${st?.dropped}`);
 } else {
     console.log('SKIP  S17 (duel_of_8 0.3.0 firmware not present on this machine)');
 }

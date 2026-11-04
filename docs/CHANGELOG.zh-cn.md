@@ -6,6 +6,35 @@
 与英文版 CHANGELOG.md)。
 规则:主版本=协议/架构破坏性变更;次版本=新能力;修订=修复与小改。
 
+## peris 0.14.2
+
+- **seg7 画布裁掉了第 8 位**(`max7219-lib.js`):画布宽度公式按每位
+  dw+gap 计算,而绘制实际步进 dw+gap+0.2·dw(dp 悬挑)——第 8 位从 x≈217
+  起笔,画布只有 217 px。`displayGeometry('seg7')` 现按
+  w = 9·gap + 8·1.2·dw 求解(多个 maxW 下有单元测试)。
+- **hwspi DMA 去重丢失重现内容**(`max7219.js` v1.3.1):GDMA 内容签名
+  检查用的是全局 Set,凡是历史上出现过的帧内容都会被静默丢弃——
+  duel_of_8 的数码管在游戏重现早前画面(相同比分数字、结算后回到待机
+  画面)时就会停滞。现在只对紧邻的上一条链做去重(hal 在轮询间隙留在
+  可读状态的描述符);回到更早的内容是真实事务,会重新锁存。
+- 测试:画布适配 +1(`protocol.test.mjs`)、去重回退 +1
+  (`spi.test.mjs`),冒烟 S17b——wasm 模拟器上完整打一局 duel_of_8:
+  第 1..5 轮倒计时 10→00 走完、'-' 结算画面、回到待机画面(正是
+  重现早前内容的场景),5.5 万+帧零丢失。
+
+| device | version |
+|---|---|
+| led | 1.1.1 |
+| button / touch-button / toggle-switch | 1.1.0 |
+| pwm-led / rgb-led | 1.0.0 |
+| ws2812 | 1.0.0 |
+| bitbang-i2c-slave | 1.0.0 |
+| ir-nec | 1.0.0 |
+| max7219 | 1.3.1 |
+| ili9341 | 1.0.0 |
+| bitbang-i2s-audio | 1.0.0 |
+| logic-analyzer | 1.1.0 |
+
 ## peris 0.14.1
 
 - **MAX7219 视图译码覆盖**(`max7219.js` v1.3.0):新增配置 `segDecode`——

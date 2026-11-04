@@ -8,6 +8,40 @@ CHANGELOG.zh-cn.md).
 Rules: major = breaking protocol/architecture change; minor = new capability;
 patch = fixes and small changes.
 
+## peris 0.14.2
+
+- **seg7 canvas clipped the 8th digit** (`max7219-lib.js`): the canvas
+  width formula used a per-digit stride of dw+gap while the painter
+  advances dw+gap+0.2·dw (dp overhang) — the 8th digit started at x≈217
+  on a 217 px canvas. `displayGeometry('seg7')` now solves
+  w = 9·gap + 8·1.2·dw (unit-tested at several maxW).
+- **hwspi DMA dedupe dropped re-shown content** (`max7219.js` v1.3.1):
+  the GDMA content-signature check kept a global Set, so a frame whose
+  content had EVER been shown before was silently dropped — duel_of_8's
+  7-segment display went stale whenever the game re-showed an earlier
+  screen (same score digit, the standby screen after settle). Now only
+  the immediately previous chain's signature is deduped (a descriptor
+  the hal left readable between polls); returning to earlier content is
+  a real transaction and latches again.
+- Tests: geometry fit +1 (`protocol.test.mjs`), dedupe-return +1
+  (`spi.test.mjs`), and smoke S17b — a FULL duel_of_8 game on the wasm
+  emulator: rounds 1..5 with the countdown ticking 10→00, the '-'
+  settle screen, and the return to the standby screen (the exact
+  return-to-earlier-content case), zero dropped frames over 55k+.
+
+| device | version |
+|---|---|
+| led | 1.1.1 |
+| button / touch-button / toggle-switch | 1.1.0 |
+| pwm-led / rgb-led | 1.0.0 |
+| ws2812 | 1.0.0 |
+| bitbang-i2c-slave | 1.0.0 |
+| ir-nec | 1.0.0 |
+| max7219 | 1.3.1 |
+| ili9341 | 1.0.0 |
+| bitbang-i2s-audio | 1.0.0 |
+| logic-analyzer | 1.1.0 |
+
 ## peris 0.14.1
 
 - **MAX7219 view decode override** (`max7219.js` v1.3.0): new config

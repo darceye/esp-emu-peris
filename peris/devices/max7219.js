@@ -88,7 +88,7 @@ const isDmaFrame = (b) => b.length >= 2 && b.length <= 16 && b.length % 2 === 0
 
 export class Device {
     static typeId = 'max7219';
-    static version = '1.3.0';
+    static version = '1.3.1';
     static title = 'MAX7219 Display';
     static category = 'display';
     static description = '8-digit LED driver on a firmware bit-banged DIN/CLK/LOAD bus or the hardware SPI2 master — 8×8 matrix or 7-segment view, daisy-chainable.';
@@ -149,7 +149,7 @@ export class Device {
             this.wiring = null;
             this.batchCount = 0;
             this.dmaChannel = null; // sticky GDMA channel (no PERI_SEL in the model)
-            this.dmaSig = new Set(); // content signatures already fed
+            this.dmaLast = null;    // last fed chain's signature
             this.dmaFeeds = 0;
             ctx.armSampling(HW_ARM_BATCH);
             return;
@@ -168,7 +168,7 @@ export class Device {
             this.window.reset();
             this.wiring = null;
             this.dmaChannel = null;
-            this.dmaSig = new Set();
+            this.dmaLast = null;
             this.dmaFeeds = 0;
             this.ctx.armSampling(HW_ARM_BATCH);
         } else {
@@ -212,8 +212,14 @@ export class Device {
             if (walked && isDmaFrame(walked.bytes)) {
                 if (walked.channel !== undefined) this.dmaChannel = walked.channel;
                 const sig = `${walked.bytes.length}:${Array.from(walked.bytes).join(',')}`;
-                if (!this.dmaSig.has(sig)) {
-                    this.dmaSig.add(sig);
+                // dedupe only the IMMEDIATELY PREVIOUS chain: a descriptor the
+                // hal left readable between polls must not feed twice, but
+                // returning to EARLIER content (a score that repeats, a blank
+                // between states) is a real transaction and must land — a
+                // global signature set silently dropped those (duel_of_8 game
+                // rounds re-show old glyphs)
+                if (sig !== this.dmaLast) {
+                    this.dmaLast = sig;
                     this.dmaFeeds++;
                     this._onHwTransfer(walked.bytes);
                 }

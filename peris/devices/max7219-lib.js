@@ -358,9 +358,13 @@ export function drawDisplay(g, geo, mode, segs, brightness) {
  * the matrix grid so every MAX7219 visual uses one dot layout). */
 export function displayGeometry(mode, maxW = 240) {
     if (mode === 'seg7') {
-        const dw = Math.floor((maxW - 9 * 4) / 8.9); // 8 digits + gaps + dp overhang
+        // digit stride = dw + gap + 0.2·dw (dp overhang), plus one leading
+        // gap: w = 9·gap + 8·1.2·dw — solved for dw at maxW, so all 8
+        // digits fit (the old 8·(dw+4)+… width clipped the 8th)
+        const gap = 4;
+        const dw = Math.floor((maxW - 9 * gap) / 9.6);
         const dh = Math.round(dw * 1.55);
-        return { w: Math.ceil(8 * (dw + 4) + dw * 0.2 + 4), h: dh, dw, dh, gap: 4 };
+        return { w: Math.ceil(9 * gap + 8 * 1.2 * dw), h: dh, dw, dh, gap };
     }
     return ledPositions('matrix', 64, 8, maxW);
 }

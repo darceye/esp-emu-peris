@@ -352,13 +352,15 @@ test('max7219: hwspi DMA feeds — dedupe identical, decode new content (S3)', (
     arm([0x09, 0xff]);          // decode mode
     arm([0x09, 0xff]);          // periodic heal: identical frame → deduped
     arm([0x0c, 0x01]);          // shutdown off
-    arm([0x01, 0x7f]);          // digit 1
+    arm([0x01, 0x7f]);          // digit 0 = 0x7f
+    arm([0x01, 0x06]);          // digit 0 = 6 (changed)
+    arm([0x01, 0x7f]);          // back to the EARLIER glyph — must feed again
     const st = dev.getState();
     assert.equal(st.scanLimit, 7);
     assert.equal(st.decodeMode, 0xff);
     assert.equal(st.shutdown, false);
-    assert.equal(st.digits[0], 0x7f);
-    assert.equal(st.dmaFeeds, 4, 'the identical repeat fed once, not twice');
+    assert.equal(st.digits[0], 0x7f, 'returning to earlier content re-latches');
+    assert.equal(st.dmaFeeds, 6, 'only the identical repeat deduped');
     assert.equal(st.transfers, 0, 'no-DMA W window stays idle');
     assert.equal(st.dropped, 0);
     assert.equal(dev.dmaChannel, 0, 'the GDMA channel went sticky');
