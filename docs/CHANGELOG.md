@@ -8,6 +8,15 @@ CHANGELOG.zh-cn.md).
 Rules: major = breaking protocol/architecture change; minor = new capability;
 patch = fixes and small changes.
 
+## peris 0.14.5
+
+- **Crisper seg7 row icon** (`max7219.js` v1.3.4, `max7219-lib.js`): the
+  2×4 icon digits are now 4×9 px (integer-ish boundaries instead of
+  4.6×8.4), and `drawSeg7` disables its glow below 8 px digit width —
+  the 6 px shadow blur on a 4 px digit swamped the edges. Full-size
+  digits keep the glow.
+- Device version table: max7219 1.3.4.
+
 ## peris 0.14.4
 
 - **MAX7219 row icon shows all 8 digits in seg7 mode** (`max7219.js`

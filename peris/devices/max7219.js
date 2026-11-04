@@ -88,7 +88,7 @@ const isDmaFrame = (b) => b.length >= 2 && b.length <= 16 && b.length % 2 === 0
 
 export class Device {
     static typeId = 'max7219';
-    static version = '1.3.3';
+    static version = '1.3.4';
     static title = 'MAX7219 Display';
     static category = 'display';
     static description = '8-digit LED driver on a firmware bit-banged DIN/CLK/LOAD bus or the hardware SPI2 master — 8×8 matrix or 7-segment view, daisy-chainable.';
@@ -386,9 +386,10 @@ export class View {
         if (!lit) return;
         if (mode === 'seg7') {
             /* all 8 digits, 2 rows × 4 — same reading order as the details
-             * canvas (DIG7 top-left … DIG0 bottom-right; DIG0 rightmost in
-             * each row's numbering continues across rows). */
-            const dw = 4.6, dh = 8.4, gx = 0.5, gy = 1.4, sx = dw + 0.8, sy = dh + 1.4;
+             * canvas (DIG7 top-left … DIG0 bottom-right). 4×9 px digits keep
+             * segment edges on crisper pixel boundaries than wider
+             * fractional sizes. */
+            const dw = 4, dh = 9, gx = 0.5, gy = 1, sx = dw + 1.3, sy = dh + 2;
             for (let i = 0; i < 8; i++) {
                 const d = 7 - i; // DIG7 first (reading order)
                 drawSeg7(g, gx + (i % 4) * sx, gy + Math.floor(i / 4) * sy, dw, dh, segs[d], segs[d] ? level : 0);

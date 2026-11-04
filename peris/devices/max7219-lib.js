@@ -294,15 +294,18 @@ export function drawSeg7(g, x, y, w, h, segs, level) {
         [cx, cy1 - th / 2], [cx + th / 2, cy1], [cx + th / 2, cy2],
         [cx, cy2 + th / 2], [cx - th / 2, cy2], [cx - th / 2, cy1],
     ]);
+    // the glow only pays off on real-size digits — on the tiny row-icon
+    // digits (< 8 px wide) it swamps the edges, so it scales down to zero
+    const blur = w >= 8 ? 6 * level : 0;
     const paint = (mask, shape) => {
         const on = (segs & mask) !== 0 && level > 0.003;
         g.save();
         g.fillStyle = on
             ? `rgba(${MX_COLOR[0]},${MX_COLOR[1]},${MX_COLOR[2]},${Math.min(1, level * 1.25)})`
             : 'rgba(255,255,255,0.05)';
-        if (on) {
+        if (on && blur > 0) {
             g.shadowColor = `rgba(${MX_COLOR[0]},${MX_COLOR[1]},${MX_COLOR[2]},${Math.min(1, level)})`;
-            g.shadowBlur = 6 * level;
+            g.shadowBlur = blur;
         }
         shape();
         g.restore();
