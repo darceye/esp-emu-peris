@@ -8,6 +8,15 @@ CHANGELOG.zh-cn.md).
 Rules: major = breaking protocol/architecture change; minor = new capability;
 patch = fixes and small changes.
 
+## peris 0.14.4
+
+- **MAX7219 row icon shows all 8 digits in seg7 mode** (`max7219.js`
+  v1.3.3): the miniature row icon used to render only the first lit
+  digit; it now paints the whole display as a 2×4 grid of tiny digits
+  (same reading order as the details canvas, DIG7 top-left), matrix mode
+  unchanged.
+- Device version table: max7219 1.3.3.
+
 ## peris 0.14.3
 
 - **hwspi DMA torn-read gate** (`max7219.js` v1.3.2): duel_of_8 showed a
